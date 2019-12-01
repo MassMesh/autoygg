@@ -1,6 +1,7 @@
 module github.com/massmesh/autoygg
 
 require (
+	github.com/brotherpowers/ipsubnet v0.0.0-20170914094241-30bc98f0a5b1
 	github.com/gin-contrib/sessions v0.0.1
 	github.com/gin-gonic/gin v1.4.0
 	github.com/jinzhu/gorm v1.9.11

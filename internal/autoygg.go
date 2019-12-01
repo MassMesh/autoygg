@@ -13,6 +13,8 @@ import (
   "net"
   "net/http"
   "os/exec"
+  "regexp"
+  "strconv"
   "strings"
   "time"
 )
@@ -23,7 +25,7 @@ type Info struct {
     RegistrationRequired bool
 }
 
-// State: 
+// State:
 // pending: needs human approval
 // open: ready for the yggdrasil goroutine to execute
 // success: all set
@@ -32,12 +34,16 @@ type Info struct {
 
 type Registration struct {
   gorm.Model
-  State        string
-  PublicKey    string
-  YggIP        string  // The Yggdrasil IP address
-  ClientIP     string  // The tunnel IP address assigned to the client
-  ClientInfo   string
-  LeaseExpires time.Time
+  State             string
+  GatewayPublicKey  string
+  PublicKey         string
+  YggIP             string  // The Yggdrasil IP address
+  ClientIP          string  // The tunnel IP address assigned to the client
+  ClientNetMask     int     // The tunnel netmask
+  ClientGateway     string
+  ClientInfo        string
+  LeaseExpires      time.Time
+  Error             string
 }
 
 var errorCount = prometheus.NewCounterVec(
@@ -76,7 +82,7 @@ func registerHandler(db *gorm.DB, c *gin.Context) {
     } else {
       incErrorCount("internal")
       log.Println("Internal error, unable to execute query:", result.Error)
-      c.JSON(http.StatusInternalServerError, gin.H{"Error": "Internal Server Error"})
+      c.JSON(http.StatusInternalServerError, Registration{Error: "Internal Server Error"})
       return
     }
   }
@@ -120,13 +126,13 @@ func newIPAddress(db *gorm.DB) (IPAddress string) {
 
 func bindRegistration(c *gin.Context) (err error, registration Registration) {
   if e := c.BindJSON(&registration); e != nil {
-    c.JSON(http.StatusBadRequest, gin.H{"Error": "Malformed json request"})
+    c.JSON(http.StatusBadRequest, Registration{Error: "Malformed json request"})
     c.Abort()
     err = e
     return
   }
   if len(registration.PublicKey) != 64 {
-    c.JSON(http.StatusBadRequest, gin.H{"Error": "Malformed json request: PublicKey length incorrect"})
+    c.JSON(http.StatusBadRequest, Registration{Error: "Malformed json request: PublicKey length incorrect"})
     c.Abort()
     err = errors.New("Malformed json request: PublicKey length incorrect")
     registration = Registration{}
@@ -140,7 +146,7 @@ func bindRegistration(c *gin.Context) (err error, registration Registration) {
 func validateRegistration(c *gin.Context) (err error) {
   // FIXME take whitelist/blacklist into account
   if ! viper.GetBool("AllowRegistration") {
-    c.JSON(http.StatusForbidden, gin.H{"Error": "Registration disabled on server"})
+    c.JSON(http.StatusForbidden, Registration{Error: "Registration disabled on server"})
     c.Abort()
     return
   }
@@ -159,7 +165,7 @@ func authorized(db *gorm.DB, c *gin.Context) (err error, registration Registrati
 
   if result := db.Where("ygg_ip = ?",c.ClientIP()).First(&existingRegistration); result.Error != nil {
     if gorm.IsRecordNotFoundError(result.Error) {
-      c.JSON(http.StatusNotFound, gin.H{"Error": "Registration not found"})
+      c.JSON(http.StatusNotFound, Registration{Error: "Registration not found"})
       c.Abort()
       err = result.Error
       return
@@ -199,7 +205,7 @@ func renewHandler(db *gorm.DB, c *gin.Context) {
   }
 
   if registration.State == "open" {
-    AddRemoteSubnet(db,registration.ID)
+    QueueAddRemoteSubnet(db,registration.ID)
   }
 
   c.JSON(http.StatusOK, registration)
@@ -224,7 +230,7 @@ func releaseHandler(db *gorm.DB, c *gin.Context) {
   }
 
   // FIXME do not do this inline
-  RemoveRemoteSubnet(db, registration.ID)
+  ServerRemoveRemoteSubnet(db, registration.ID)
 
   c.JSON(http.StatusOK, registration)
   return
@@ -234,17 +240,17 @@ func releaseHandler(db *gorm.DB, c *gin.Context) {
 func newRegistrationHandler(db *gorm.DB, c *gin.Context) {
   var newRegistration Registration
   if err := c.BindJSON(&newRegistration); err != nil {
-    c.JSON(http.StatusBadRequest, gin.H{"Error": "Malformed json request"})
+    c.JSON(http.StatusBadRequest, Registration{Error: "Malformed json request"})
     return
   }
   if len(newRegistration.PublicKey) != 64 {
-    c.JSON(http.StatusBadRequest, gin.H{"Error": "Malformed json request: PublicKey length incorrect"})
+    c.JSON(http.StatusBadRequest, Registration{Error: "Malformed json request: PublicKey length incorrect"})
     return
   }
 
   // FIXME take whitelist/blacklist into account
   if ! viper.GetBool("AllowRegistration") {
-    c.JSON(http.StatusForbidden, gin.H{"Error": "Registration disabled on server"})
+    c.JSON(http.StatusForbidden, Registration{Error: "Registration disabled on server"})
     return
   }
 
@@ -264,6 +270,9 @@ func newRegistrationHandler(db *gorm.DB, c *gin.Context) {
   if existingRegistration == (Registration{}) {
     // First time we've seen this public key
     newRegistration.ClientIP = newIPAddress(db)
+    newRegistration.ClientNetMask = viper.GetInt("GatewayTunnelNetMask")
+    newRegistration.ClientGateway = viper.GetString("GatewayTunnelIP")
+    newRegistration.GatewayPublicKey = viper.GetString("GatewayPublicKey")
     newRegistration.YggIP = c.ClientIP()
   } else {
     // FIXME only allow if the lease is expired?
@@ -277,17 +286,16 @@ func newRegistrationHandler(db *gorm.DB, c *gin.Context) {
   if result := db.Save(&newRegistration); result.Error != nil {
     incErrorCount("internal")
     log.Println("Internal error, unable to execute query:", result.Error)
-    c.JSON(http.StatusInternalServerError, gin.H{"Error": "Internal Server Error"})
+    c.JSON(http.StatusInternalServerError, Registration{Error: "Internal Server Error"})
     return
   }
-  AddRemoteSubnet(db,newRegistration.ID)
+  QueueAddRemoteSubnet(db,newRegistration.ID)
 
   c.JSON(http.StatusOK, newRegistration)
   return
 }
 
-// FIXME: queue this, rather than doing it inline
-func AddRemoteSubnet(db *gorm.DB, ID uint) {
+func QueueAddRemoteSubnet(db *gorm.DB, ID uint) {
   var registration Registration
   if result := db.First(&registration, ID); result.Error != nil {
     incErrorCount("internal")
@@ -298,18 +306,12 @@ func AddRemoteSubnet(db *gorm.DB, ID uint) {
     // Nothing to do!
     return
   }
-  command := viper.GetString("GatewayAddRemoteSubnetCommand")
-  command = strings.Replace(command, "%%SUBNET%%", registration.ClientIP, -1)
-  command = strings.Replace(command, "%%CLIENT_PUBLIC_KEY%%", registration.PublicKey, -1)
-
-  fmt.Println(command)
-  commandSlice := strings.Split(command," ")
-  cmd := exec.Command(commandSlice[0],commandSlice[1:]...)
-  err := cmd.Run()
+  // FIXME: actually queue this, rather than doing it inline
+  err := AddRemoteSubnet(registration.ClientIP + "/32", registration.PublicKey)
 
   if err != nil {
     incErrorCount("yggdrasil")
-    log.Printf("Yggdrasil error, unable to run %s: %s", command, err)
+    log.Printf("Yggdrasil error, unable to run command: %s", err)
     registration.State = "fail"
   } else {
     registration.State = "success"
@@ -322,7 +324,8 @@ func AddRemoteSubnet(db *gorm.DB, ID uint) {
   }
 }
 
-func RemoveRemoteSubnet(db *gorm.DB, ID uint) {
+//FIXME refactor check out RemoveRemoteSubnet
+func ServerRemoveRemoteSubnet(db *gorm.DB, ID uint) {
   var registration Registration
   if result := db.First(&registration, ID); result.Error != nil {
     incErrorCount("internal")
@@ -331,7 +334,7 @@ func RemoveRemoteSubnet(db *gorm.DB, ID uint) {
   }
 
   command := viper.GetString("GatewayRemoveRemoteSubnetCommand")
-  command = strings.Replace(command, "%%SUBNET%%", registration.ClientIP, -1)
+  command = strings.Replace(command, "%%SUBNET%%", registration.ClientIP + "/32", -1)
   command = strings.Replace(command, "%%CLIENT_PUBLIC_KEY%%", registration.PublicKey, -1)
 
   fmt.Println(command)
@@ -430,27 +433,265 @@ func loadConfigDefaults() {
   viper.SetDefault("Blacklist", []string{}) // Unset the Blacklist configuration value to disable the blacklist
   viper.SetDefault("MaxClients", 10)
   viper.SetDefault("LeaseTimeoutSeconds", 14400) // Default to 4 hours
-  viper.SetDefault("GatewayTunnelIP", "10.42.0.1/16")
+  viper.SetDefault("GatewayTunnelIP", "10.42.0.1")
+  viper.SetDefault("GatewayTunnelNetMask", 16)
   viper.SetDefault("GatewayTunnelIPRangeMin", "10.42.42.1") // Minimum IP for "DHCP" range
   viper.SetDefault("GatewayTunnelIPRangeMax", "10.42.42.255") // Maximum IP for "DHCP" range
-  viper.SetDefault("GatewayAddRemoteSubnetCommand", "/usr/bin/yggdrasilctl addremotesubnet subnet=%%SUBNET%%/32 box_pub_key=%%CLIENT_PUBLIC_KEY%%")
-  viper.SetDefault("GatewayRemoveRemoteSubnetCommand", "/usr/bin/yggdrasilctl removeremotesubnet subnet=%%SUBNET%%/32 box_pub_key=%%CLIENT_PUBLIC_KEY%%")
+  viper.SetDefault("GatewayAddRemoteSubnetCommand", "/usr/bin/yggdrasilctl addremotesubnet subnet=%%SUBNET%% box_pub_key=%%CLIENT_PUBLIC_KEY%%")
+  viper.SetDefault("GatewayRemoveRemoteSubnetCommand", "/usr/bin/yggdrasilctl removeremotesubnet subnet=%%SUBNET%% box_pub_key=%%CLIENT_PUBLIC_KEY%%")
+  err, gatewayPublicKey := GetSelfPublicKey()
+  if err != nil {
+    incErrorCount("yggdrasil")
+    log.Printf("Error: unable to run yggdrasilctl: %s",err)
+  } else {
+    viper.SetDefault("GatewayPublicKey", gatewayPublicKey)
+  }
+
 }
 
-func EnsureGatewayTunnelIP() {
+func AddTunnelIP(IPAddress string, NetMask int) {
+  TunnelIPWorker("add", IPAddress, NetMask)
+}
+
+func RemoveTunnelIP(IPAddress string, NetMask int) {
+  TunnelIPWorker("del", IPAddress, NetMask)
+}
+
+func TunnelIPWorker(action string, IPAddress string, NetMask int) {
   out, err := exec.Command("ip","addr","list","tun0").Output()
   if err != nil {
     incErrorCount("ip")
     log.Printf("ip error, unable to run `ip addr list tun0`: %s", err)
   }
 
-  if strings.Index(string(out),viper.GetString("GatewayTunnelIP")) == -1 {
-    _, err = exec.Command("ip","addr","add",viper.GetString("GatewayTunnelIP"),"dev","tun0").Output()
+  found := strings.Index(string(out),IPAddress + "/" + strconv.Itoa(NetMask))
+
+  if (action == "add" && found == -1) || (action == "del" && found != -1) {
+    _, err = exec.Command("ip","addr",action,IPAddress + "/" + strconv.Itoa(NetMask),"dev","tun0").Output()
     if err != nil {
       incErrorCount("ip")
-      log.Printf("ip error, unable to run `ip addr add %s dev tun0`: %s", viper.GetString("GatewayTunnelIP"), err)
+      log.Printf("ip error, unable to run `ip addr %s %s/%d dev tun0`: %s", action, IPAddress, NetMask, err)
     }
   }
+}
+
+func AddRemoteSubnet(Subnet string, PublicKey string) (err error) {
+  return RemoteSubnetWorker("Add", Subnet, PublicKey)
+}
+
+func RemoveRemoteSubnet(Subnet string, PublicKey string) (err error) {
+  return RemoteSubnetWorker("Remove", Subnet, PublicKey)
+}
+
+func RemoteSubnetWorker(Action string, Subnet string, PublicKey string) (err error) {
+  out, err := ExecuteYggdrasilCtl("getroutes")
+  if err != nil {
+    return
+  }
+  matched, err := regexp.Match(Subnet, out)
+  if err != nil {
+    return
+  }
+  if (matched && Action == "Add") || (!matched && Action == "Remove") {
+    // We don't need to do anything
+    return
+  }
+
+  command := viper.GetString("Gateway" + Action + "RemoteSubnetCommand")
+  command = strings.Replace(command, "%%SUBNET%%", Subnet, -1)
+  command = strings.Replace(command, "%%CLIENT_PUBLIC_KEY%%", PublicKey, -1)
+
+  commandSlice := strings.Split(command," ")
+  cmd := exec.Command(commandSlice[0],commandSlice[1:]...)
+  err = cmd.Run()
+  if err != nil {
+    err = fmt.Errorf("Unable to run `%s`: %s", command, err)
+  }
+
+  return
+}
+
+// ip ro add <peer_ip> via <wan_gw> dev <wan_dev>
+func AddPeerRoute (peer string, defaultGatewayIP string, defaultGatewayDevice string) (err error) {
+  return PeerRouteWorker("add", peer, defaultGatewayIP, defaultGatewayDevice)
+}
+
+// ip ro del <peer_ip> via <wan_gw> dev <wan_dev>
+func RemovePeerRoute (peer string, defaultGatewayIP string, defaultGatewayDevice string) (err error) {
+  return PeerRouteWorker("del", peer, defaultGatewayIP, defaultGatewayDevice)
+}
+
+func PeerRouteWorker (action string, peer string, defaultGatewayIP string, defaultGatewayDevice string) (err error) {
+  cmdArgs := []string{"ro",action,peer,"via",defaultGatewayIP,"dev",defaultGatewayDevice}
+  _, err = exec.Command("ip",cmdArgs...).Output()
+  if err != nil {
+    err = fmt.Errorf("Unable to run `ip %s`: %s", strings.Join(cmdArgs," "), err)
+  }
+  return
+}
+
+// ip ro add default via <ygg_gateway_ip>
+func AddDefaultGateway(clientGateway string) (err error) {
+  return DefaultGatewayWorker("add",clientGateway)
+}
+
+func RemoveDefaultGateway(clientGateway string) (err error) {
+  return DefaultGatewayWorker("del",clientGateway)
+}
+
+func DefaultGatewayWorker(action string, clientGateway string) (err error) {
+  cmdArgs := []string{"ro",action,"default","via",clientGateway}
+  _, err = exec.Command("ip",cmdArgs...).Output()
+  if err != nil {
+    err = fmt.Errorf("Unable to run `ip %s`: %s", strings.Join(cmdArgs," "), err)
+  }
+  return
+}
+
+
+//                                        bytes_recvd    bytes_sent    endpoint                                      port  proto  uptime
+//200:40ff:e447:5bb6:13ee:8a9a:e71d:b6ee  817789         0             tcp://[fe80::109a:683d:a72:c4f5%wlan0]:45279  2     tcp    11:16:30
+//201:44e1:28f0:af3c:cf1b:6e2a:79bd:44b0  14578499       14497520      tcp://50.236.201.218:56088                    3     tcp    11:15:45
+func YggdrasilPeers() (peers []string, err error) {
+  err, selfAddress := GetSelfAddress()
+
+  out, err := ExecuteYggdrasilCtl("getPeers")
+  if err != nil {
+    return
+  }
+  var matched bool
+  for _, l := range strings.Split(string(out), "\n") {
+    matched, err = regexp.MatchString("^2", l)
+    if err != nil {
+      return
+    }
+
+    if !matched {
+      // Not a line that starts with a peer address
+      continue
+    }
+    if strings.HasPrefix(l,selfAddress) {
+      // Skip ourselves
+      continue
+    }
+
+    re := regexp.MustCompile(` .*?://(.*?):.* `)
+    match := re.FindStringSubmatch(l)
+    if len(match) < 1 {
+      err = fmt.Errorf("Unable to parse yggdrasilctl output: %s",l)
+      return
+    }
+    peers = append(peers, match[1])
+  }
+  return
+}
+
+func ExecuteYggdrasilCtl(cmd ...string) (out []byte, err error) {
+  out, err = exec.Command("yggdrasilctl",cmd...).Output()
+  if err != nil {
+    err = fmt.Errorf("Unable to run `yggdrasilctl %s`: %s", strings.Join(cmd," "), err)
+  }
+  return
+}
+
+func EnableTunnelRouting() (err error) {
+  return TunnelRoutingWorker("true")
+}
+
+func DisableTunnelRouting() (err error) {
+  return TunnelRoutingWorker("false")
+}
+
+func TunnelRoutingWorker(State string) (err error) {
+  out, err := ExecuteYggdrasilCtl("gettunnelrouting")
+  if err != nil {
+    return
+  }
+
+  var matched bool
+  if State == "true" {
+    matched, err = regexp.Match("Tunnel routing is enabled", out)
+    if err != nil || matched {
+      return
+    }
+  } else {
+    matched, err = regexp.Match("Tunnel routing is disabled", out)
+    if err != nil || matched {
+      return
+    }
+  }
+
+  _, err = ExecuteYggdrasilCtl("settunnelrouting", "enabled=" + State)
+  if err != nil {
+    return
+  }
+
+  return
+}
+
+func AddLocalSubnet(Subnet string) (err error) {
+  return LocalSubnetWorker("add", Subnet)
+}
+
+func RemoveLocalSubnet(Subnet string) (err error) {
+  return LocalSubnetWorker("remove", Subnet)
+}
+
+func LocalSubnetWorker(Action string, Subnet string) (err error) {
+  out, err := ExecuteYggdrasilCtl("getsourcesubnets")
+  if err != nil {
+    return
+  }
+
+  matched, err := regexp.Match("- " + Subnet, out)
+  if err != nil || (Action == "add" && matched) || (Action =="remove" && !matched) {
+    return
+  }
+
+  _, err = ExecuteYggdrasilCtl(Action + "localsubnet", "subnet=" + Subnet)
+  if err != nil {
+    return
+  }
+
+  return
+}
+
+func GetSelfAddress() (err error, address string) {
+  out, err := ExecuteYggdrasilCtl("-v","getSelf")
+  if err != nil {
+    return
+  }
+
+  re := regexp.MustCompile(`(?m)^IPv6 address: (.*?)$`)
+  match := re.FindStringSubmatch(string(out))
+
+  if len(match) < 2 {
+    err = fmt.Errorf("Unable to parse yggdrasilctl output: %s", string(out))
+    return
+  }
+
+  address = match[1]
+
+  return
+}
+
+func GetSelfPublicKey() (err error, publicKey string) {
+  out, err := ExecuteYggdrasilCtl("-v","getSelf")
+  if err != nil {
+    return
+  }
+
+  re := regexp.MustCompile(`(?m)^Public encryption key: (.*?)$`)
+  match := re.FindStringSubmatch(string(out))
+
+  if len(match) < 2 {
+    err = fmt.Errorf("Unable to parse yggdrasilctl output: %s", string(out))
+    return
+  }
+
+  publicKey = match[1]
+
+  return
 }
 
 func LoadConfig(path string) {

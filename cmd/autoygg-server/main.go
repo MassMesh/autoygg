@@ -10,6 +10,6 @@ func main() {
   db := internal.SetupDB("sqlite3",viper.GetString("StateDir") + "/autoygg.db")
   defer db.Close()
   r := internal.SetupRouter(db,true)
-  internal.EnsureGatewayTunnelIP()
+  internal.AddTunnelIP(viper.GetString("GatewayTunnelIP"),viper.GetInt("GatewayTunnelNetmask"))
   r.Run("[" + viper.GetString("ListenHost")+"]:"+viper.GetString("ListenPort"))
 }
