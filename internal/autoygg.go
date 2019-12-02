@@ -19,6 +19,20 @@ import (
   "time"
 )
 
+var Quiet bool
+
+type LogWriter struct {
+}
+
+func (writer LogWriter) Write(bytes []byte) (int, error) {
+  if !Quiet {
+    // Strip the last character, it's a newline!
+    return fmt.Printf("%-70s",string(bytes[:len(bytes)-1]))
+  } else {
+    return 0, nil
+  }
+}
+
 type Info struct {
     GatewayOwner  string
     Description   string
@@ -449,19 +463,19 @@ func loadConfigDefaults() {
 
 }
 
-func AddTunnelIP(IPAddress string, NetMask int) {
-  TunnelIPWorker("add", IPAddress, NetMask)
+func AddTunnelIP(IPAddress string, NetMask int) (err error) {
+  return TunnelIPWorker("add", IPAddress, NetMask)
 }
 
-func RemoveTunnelIP(IPAddress string, NetMask int) {
-  TunnelIPWorker("del", IPAddress, NetMask)
+func RemoveTunnelIP(IPAddress string, NetMask int) (err error) {
+  return TunnelIPWorker("del", IPAddress, NetMask)
 }
 
-func TunnelIPWorker(action string, IPAddress string, NetMask int) {
+func TunnelIPWorker(action string, IPAddress string, NetMask int) (err error) {
   out, err := exec.Command("ip","addr","list","tun0").Output()
   if err != nil {
-    incErrorCount("ip")
-    log.Printf("ip error, unable to run `ip addr list tun0`: %s", err)
+    err = fmt.Errorf("Unable to run `ip addr list tun0`: %s", err)
+    return
   }
 
   found := strings.Index(string(out),IPAddress + "/" + strconv.Itoa(NetMask))
@@ -469,10 +483,11 @@ func TunnelIPWorker(action string, IPAddress string, NetMask int) {
   if (action == "add" && found == -1) || (action == "del" && found != -1) {
     _, err = exec.Command("ip","addr",action,IPAddress + "/" + strconv.Itoa(NetMask),"dev","tun0").Output()
     if err != nil {
-      incErrorCount("ip")
-      log.Printf("ip error, unable to run `ip addr %s %s/%d dev tun0`: %s", action, IPAddress, NetMask, err)
+      err = fmt.Errorf("Unable to run `ip addr %s %s/%d dev tun0`: %s", action, IPAddress, NetMask, err)
+      return
     }
   }
+  return
 }
 
 func AddRemoteSubnet(Subnet string, PublicKey string) (err error) {
@@ -522,7 +537,18 @@ func RemovePeerRoute (peer string, defaultGatewayIP string, defaultGatewayDevice
 }
 
 func PeerRouteWorker (action string, peer string, defaultGatewayIP string, defaultGatewayDevice string) (err error) {
-  cmdArgs := []string{"ro",action,peer,"via",defaultGatewayIP,"dev",defaultGatewayDevice}
+  cmdArgs := []string{"ro","list",peer,"via",defaultGatewayIP,"dev",defaultGatewayDevice}
+  out, err := exec.Command("ip",cmdArgs...).Output()
+  if err != nil {
+    err = fmt.Errorf("Unable to run `ip %s`: %s", strings.Join(cmdArgs," "), err)
+    return
+  }
+  if (action == "add" && strings.TrimSpace(string(out)) == peer) || (action == "del" && len(out) == 1) {
+    // Nothing to do!
+    return
+  }
+
+  cmdArgs = []string{"ro",action,peer,"via",defaultGatewayIP,"dev",defaultGatewayDevice}
   _, err = exec.Command("ip",cmdArgs...).Output()
   if err != nil {
     err = fmt.Errorf("Unable to run `ip %s`: %s", strings.Join(cmdArgs," "), err)
@@ -718,4 +744,3 @@ func LoadConfig(path string) {
     fatal(fmt.Sprintln("Fatal error reading config file:", err.Error()))
   }
 }
-

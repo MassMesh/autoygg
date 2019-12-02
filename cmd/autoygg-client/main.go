@@ -9,10 +9,13 @@ import (
   //"github.com/brotherpowers/ipsubnet"
   "github.com/massmesh/autoygg/internal"
   "github.com/spf13/viper"
+  "log"
   "io/ioutil"
   "net/http"
   "os"
 )
+
+var debug bool
 
 func logFatal(err error) {
   fmt.Printf("\nError: %s\n\n", err.Error())
@@ -56,43 +59,48 @@ func doPostRequest(fs *flag.FlagSet, action string, gatewayHost string, gatewayP
 }
 
 func setupRoutes(clientIP string, clientNetMask int, clientGateway string, publicKey string, defaultGatewayIP string, defaultGatewayDevice string) (err error) {
+  log.Printf("Enabling Yggdrasil tunnel routing")
   err = internal.EnableTunnelRouting()
+  handleError(err)
   if err != nil {
     return
   }
 
+  log.Printf("Adding Yggdrasil local subnet 0.0.0.0/0")
   err = internal.AddLocalSubnet("0.0.0.0/0")
-  if err != nil {
-    fmt.Printf("%s\n", err)
-  }
+  handleError(err)
 
-  internal.AddTunnelIP(clientIP,clientNetMask)
+  log.Printf("Removing tunnel IP %s/%d",clientIP,clientNetMask)
+  err = internal.AddTunnelIP(clientIP,clientNetMask)
+  handleError(err)
 
   // FIXME do we want to make this properly configurable?
   viper.SetDefault("GatewayAddRemoteSubnetCommand", "/usr/bin/yggdrasilctl addremotesubnet subnet=%%SUBNET%% box_pub_key=%%CLIENT_PUBLIC_KEY%%")
 
-  //sub := ipsubnet.SubnetCalculator(clientIP, clientNetMask)
-  //err := internal.AddRemoteSubnet(sub.GetNetworkPortion() + "/" + strconv.Itoa(clientNetMask), publicKey)
+  log.Printf("Adding Yggdrasil remote subnet 0.0.0.0/0")
   err = internal.AddRemoteSubnet("0.0.0.0/0", publicKey)
-  if err != nil {
-    fmt.Printf("%s\n", err)
-  }
+  handleError(err)
 
   // Make sure we route traffic to our Yggdrasil peer(s) to the wan default gateway
+  log.Printf("Getting Yggdrasil peers")
   peers, err := internal.YggdrasilPeers()
-  if err != nil {
-    fmt.Printf("%s\n", err)
-  }
+  handleError(err)
+
   for _, p := range peers {
     // ip ro add <peer_ip> via <wan_gw> dev <wan_dev>
+    log.Printf("Adding Yggdrasil peer route for %s via %s",p,defaultGatewayIP)
     err = internal.AddPeerRoute(p, defaultGatewayIP, defaultGatewayDevice)
+    handleError(err)
     if err != nil {
-      fmt.Printf("%s\n", err)
+      // If we can't add a route for all yggdrasil peers, something is really wrong and we should abort.
+      // Because if we change the default gateway, we will be cutting ourselves off from the internet.
+      return
     }
   }
 
-  // Now change the default gateway
+  log.Printf("Adding default gateway pointing at %s",clientGateway)
   internal.AddDefaultGateway(clientGateway)
+  handleError(err)
 
   // FIXME TODO:
   // * discover wan_gw and wan_dev if not specified via cli, and do the ip ro add thing
@@ -100,47 +108,64 @@ func setupRoutes(clientIP string, clientNetMask int, clientGateway string, publi
   return
 }
 
+func handleError(err error) {
+  if err != nil {
+    if !internal.Quiet {
+      fmt.Printf("[ FAIL ]\n")
+    }
+    fmt.Printf("-> %s\n", err)
+  } else {
+    if !internal.Quiet {
+      fmt.Printf("[ ok ]\n")
+    }
+  }
+}
+
 func tearDownRoutes(clientIP string, clientNetMask int, clientGateway string, publicKey string, defaultGatewayIP string, defaultGatewayDevice string) (err error) {
   // FIXME do we want to make this properly configurable?
   viper.SetDefault("GatewayRemoveRemoteSubnetCommand", "/usr/bin/yggdrasilctl removeremotesubnet subnet=%%SUBNET%% box_pub_key=%%CLIENT_PUBLIC_KEY%%")
 
-  // Change the default gateway
-  internal.RemoveDefaultGateway(clientGateway)
+  log.Printf("Removing default gateway pointing at %s",clientGateway)
+  err = internal.RemoveDefaultGateway(clientGateway)
+  handleError(err)
 
-  // Undo the special Yggdrasil peer routes
+  log.Printf("Getting Yggdrasil peers")
   peers, err := internal.YggdrasilPeers()
-  if err != nil {
-    fmt.Printf("%s\n", err)
-  }
+  handleError(err)
+
   for _, p := range peers {
-    // ip ro add <peer_ip> via <wan_gw> dev <wan_dev>
+    log.Printf("Removing Yggdrasil peer route for %s via %s",p,defaultGatewayIP)
     err = internal.RemovePeerRoute(p, defaultGatewayIP, defaultGatewayDevice)
-    if err != nil {
-      fmt.Printf("%s\n", err)
-    }
+    handleError(err)
   }
 
+  log.Printf("Removing Yggdrasil remote subnet 0.0.0.0/0")
   err = internal.RemoveRemoteSubnet("0.0.0.0/0", publicKey)
-  if err != nil {
-    fmt.Printf("%s\n", err)
-  }
+  handleError(err)
 
-  internal.RemoveTunnelIP(clientIP,clientNetMask)
+  log.Printf("Removing tunnel IP %s/%d",clientIP,clientNetMask)
+  err = internal.RemoveTunnelIP(clientIP,clientNetMask)
+  handleError(err)
 
+  log.Printf("Removing Yggdrasil local subnet 0.0.0.0/0")
   err = internal.RemoveLocalSubnet("0.0.0.0/0")
-  if err != nil {
-    fmt.Printf("%s\n", err)
-  }
+  handleError(err)
 
+  log.Printf("Disabling Yggdrasil tunnel routing")
   err = internal.DisableTunnelRouting()
-  if err != nil {
-    return
-  }
+  handleError(err)
 
   return
 }
 
 func main() {
+  // Initialize our own LogWriter that right justifies all lines at 70 characters
+  // and removes the trailing newline from log statements. Used for status lines
+  // where we want to write something, then execute a command, and follow with
+  // [ok] or [FAIL] on the same line.
+  log.SetFlags(0)
+  log.SetOutput(new(internal.LogWriter))
+
   var gatewayHost string
   var gatewayPort string
   var defaultGatewayIP string
@@ -155,6 +180,8 @@ func main() {
   fs.StringVar(&defaultGatewayIP, "wan-gw-ip", "", "LAN default gateway IP address (e.g. 192.168.1.1)")
   fs.StringVar(&defaultGatewayDevice, "wan-gw-dev", "eth0", "LAN default gateway device")
   fs.StringVar(&action, "action", "register", "action (register/renew/release)")
+  fs.BoolVar(&debug, "debug", false, "debug output")
+  fs.BoolVar(&internal.Quiet, "quiet", false, "suppress non-error output")
 
   err := fs.Parse(os.Args[1:])
   if err != nil {
@@ -167,11 +194,18 @@ func main() {
   }
 
   response := doPostRequest(fs,action,gatewayHost, gatewayPort)
-  fmt.Println(string(response))
+  if debug {
+    fmt.Printf("Raw server response:\n\n%s\n\n",string(response))
+  }
   var r internal.Registration
   err = json.Unmarshal(response, &r)
   if err != nil {
-    logFatal(err)
+    if action == "release" {
+      // Do not abort when we are trying to release a lease, continue with the tearDownRoutes below
+      fmt.Println(err)
+    } else {
+      logFatal(err)
+    }
   }
   if r.Error == "" {
     if action == "release" {
