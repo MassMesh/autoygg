@@ -70,7 +70,7 @@ func setupRoutes(clientIP string, clientNetMask int, clientGateway string, publi
   err = internal.AddLocalSubnet("0.0.0.0/0")
   handleError(err)
 
-  log.Printf("Removing tunnel IP %s/%d",clientIP,clientNetMask)
+  log.Printf("Adding tunnel IP %s/%d",clientIP,clientNetMask)
   err = internal.AddTunnelIP(clientIP,clientNetMask)
   handleError(err)
 
