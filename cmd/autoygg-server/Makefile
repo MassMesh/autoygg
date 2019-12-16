@@ -1,5 +1,8 @@
 
-build: lint test
+build:
+	go build -ldflags "-s -w"
+
+dev: lint test
 	go build -ldflags "-s -w"
 
 test:
