@@ -9,8 +9,9 @@ REST api that is consumed by the client component (autoygg-client).
 The client can register with the server for internet egress access. When it
 gets a successful response from the server, it will configure the local
 yggdrasil node to send all internet-bound traffic out via the node that runs
-autoygg-server. Because the traffic between the client and server runs over
-the yggdrasil network, it is end-to-end encrypted.
+autoygg-server. Because the traffic between the client and server runs over the
+yggdrasil network, it is end-to-end encrypted until the point of egress to the
+internet.
 
 ## Building the software
 
