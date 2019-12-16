@@ -99,7 +99,7 @@ func setupRoutes(clientIP string, clientNetMask int, clientGateway string, publi
   }
 
   log.Printf("Adding default gateway pointing at %s",clientGateway)
-  internal.AddDefaultGateway(clientGateway)
+  err = internal.AddDefaultGateway(clientGateway)
   handleError(err)
 
   // FIXME TODO:
