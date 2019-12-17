@@ -17,7 +17,8 @@ internet.
 
 GNU Make and a Go compiler, version 1.11 or higher are required.
 
-Build the software with the *make* command. The resulting binaries will be in the
+Build server and client software with the *make* command from the root of the
+tree. The resulting binaries will be in the
 
 ```
 cmd/autoygg-client/
@@ -25,6 +26,20 @@ cmd/autoygg-server/
 ```
 
 directories.
+
+It is also possible to build just the client. For example, to build for amd64 (e.g. to run on an APU2 target):
+
+```
+$ cd cmd/autoygg-client/
+$ make
+```
+
+To build for arm64 (e.g. to run on a Raspberry Pi 4):
+
+```
+$ cd cmd/autoygg-client/
+$ GOARCH=arm64 make
+```
 
 ## Quick start
 
