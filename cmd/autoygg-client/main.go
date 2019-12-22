@@ -61,36 +61,36 @@ func doPostRequest(fs *flag.FlagSet, action string, gatewayHost string, gatewayP
 func setupRoutes(clientIP string, clientNetMask int, clientGateway string, publicKey string, defaultGatewayIP string, defaultGatewayDevice string) (err error) {
   log.Printf("Enabling Yggdrasil tunnel routing")
   err = internal.EnableTunnelRouting()
-  handleError(err)
+  internal.HandleError(err,false)
   if err != nil {
     return
   }
 
   log.Printf("Adding Yggdrasil local subnet 0.0.0.0/0")
   err = internal.AddLocalSubnet("0.0.0.0/0")
-  handleError(err)
+  internal.HandleError(err,false)
 
   log.Printf("Adding tunnel IP %s/%d",clientIP,clientNetMask)
   err = internal.AddTunnelIP(clientIP,clientNetMask)
-  handleError(err)
+  internal.HandleError(err,false)
 
   // FIXME do we want to make this properly configurable?
   viper.SetDefault("GatewayAddRemoteSubnetCommand", "/usr/bin/yggdrasilctl addremotesubnet subnet=%%SUBNET%% box_pub_key=%%CLIENT_PUBLIC_KEY%%")
 
   log.Printf("Adding Yggdrasil remote subnet 0.0.0.0/0")
   err = internal.AddRemoteSubnet("0.0.0.0/0", publicKey)
-  handleError(err)
+  internal.HandleError(err,false)
 
   // Make sure we route traffic to our Yggdrasil peer(s) to the wan default gateway
   log.Printf("Getting Yggdrasil peers")
   peers, err := internal.YggdrasilPeers()
-  handleError(err)
+  internal.HandleError(err,false)
 
   for _, p := range peers {
     // ip ro add <peer_ip> via <wan_gw> dev <wan_dev>
     log.Printf("Adding Yggdrasil peer route for %s via %s",p,defaultGatewayIP)
     err = internal.AddPeerRoute(p, defaultGatewayIP, defaultGatewayDevice)
-    handleError(err)
+    internal.HandleError(err,false)
     if err != nil {
       // If we can't add a route for all yggdrasil peers, something is really wrong and we should abort.
       // Because if we change the default gateway, we will be cutting ourselves off from the internet.
@@ -100,25 +100,12 @@ func setupRoutes(clientIP string, clientNetMask int, clientGateway string, publi
 
   log.Printf("Adding default gateway pointing at %s",clientGateway)
   err = internal.AddDefaultGateway(clientGateway)
-  handleError(err)
+  internal.HandleError(err,false)
 
   // FIXME TODO:
   // * discover wan_gw and wan_dev if not specified via cli, and do the ip ro add thing
   // * replace default route, test connectivity, if fail, rollback?
   return
-}
-
-func handleError(err error) {
-  if err != nil {
-    if !internal.Quiet {
-      fmt.Printf("[ FAIL ]\n")
-    }
-    fmt.Printf("-> %s\n", err)
-  } else {
-    if !internal.Quiet {
-      fmt.Printf("[ ok ]\n")
-    }
-  }
 }
 
 func tearDownRoutes(clientIP string, clientNetMask int, clientGateway string, publicKey string, defaultGatewayIP string, defaultGatewayDevice string) (err error) {
@@ -127,33 +114,33 @@ func tearDownRoutes(clientIP string, clientNetMask int, clientGateway string, pu
 
   log.Printf("Removing default gateway pointing at %s",clientGateway)
   err = internal.RemoveDefaultGateway(clientGateway)
-  handleError(err)
+  internal.HandleError(err,false)
 
   log.Printf("Getting Yggdrasil peers")
   peers, err := internal.YggdrasilPeers()
-  handleError(err)
+  internal.HandleError(err,false)
 
   for _, p := range peers {
     log.Printf("Removing Yggdrasil peer route for %s via %s",p,defaultGatewayIP)
     err = internal.RemovePeerRoute(p, defaultGatewayIP, defaultGatewayDevice)
-    handleError(err)
+    internal.HandleError(err,false)
   }
 
   log.Printf("Removing Yggdrasil remote subnet 0.0.0.0/0")
   err = internal.RemoveRemoteSubnet("0.0.0.0/0", publicKey)
-  handleError(err)
+  internal.HandleError(err,false)
 
   log.Printf("Removing tunnel IP %s/%d",clientIP,clientNetMask)
   err = internal.RemoveTunnelIP(clientIP,clientNetMask)
-  handleError(err)
+  internal.HandleError(err,false)
 
   log.Printf("Removing Yggdrasil local subnet 0.0.0.0/0")
   err = internal.RemoveLocalSubnet("0.0.0.0/0")
-  handleError(err)
+  internal.HandleError(err,false)
 
   log.Printf("Disabling Yggdrasil tunnel routing")
   err = internal.DisableTunnelRouting()
-  handleError(err)
+  internal.HandleError(err,false)
 
   return
 }

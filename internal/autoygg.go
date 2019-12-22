@@ -12,6 +12,7 @@ import (
   "log"
   "net"
   "net/http"
+  "os"
   "os/exec"
   "regexp"
   "strconv"
@@ -412,7 +413,7 @@ func SetupRouter(db *gorm.DB, enablePrometheus bool) (r *gin.Engine) {
 func SetupDB(driver string, credentials string) (db *gorm.DB) {
   db, err := gorm.Open(driver, credentials)
   if err != nil {
-    fatal("Couldn't initialize database connection")
+    Fatal("Couldn't initialize database connection")
   }
   db.LogMode(true)
 
@@ -430,7 +431,7 @@ func SetupDB(driver string, credentials string) (db *gorm.DB) {
 //  }
 //}
 
-func fatal (message string) {
+func Fatal (message string) {
   log.Fatal(message)
   incErrorCount("fatal")
 }
@@ -726,7 +727,7 @@ func LoadConfig(path string) {
   viper.SetEnvPrefix("AUTOYGG") // will be uppercased automatically
   err := viper.BindEnv("CONFIG")
   if err != nil {
-    fatal(fmt.Sprintln("Fatal error:", err.Error()))
+    Fatal(fmt.Sprintln("Fatal error:", err.Error()))
   }
 
   config := "config"
@@ -741,6 +742,36 @@ func LoadConfig(path string) {
   viper.AddConfigPath(".")
   err = viper.ReadInConfig()
   if err != nil {
-    fatal(fmt.Sprintln("Fatal error reading config file:", err.Error()))
+    Fatal(fmt.Sprintln("Fatal error reading config file:", err.Error()))
   }
+}
+
+func HandleError(err error, terminateOnFail bool) {
+  if err != nil {
+    if !Quiet {
+      fmt.Printf("[ FAIL ]\n")
+      if terminateOnFail {
+        os.Exit(1)
+      }
+    }
+    fmt.Printf("-> %s\n", err)
+  } else {
+    if !Quiet {
+      fmt.Printf("[ ok ]\n")
+    }
+  }
+}
+
+func EnableIPForwarding() (err error) {
+  f, err := os.OpenFile("/proc/sys/net/ipv4/ip_forward",os.O_RDWR,0644)
+  if err != nil {
+    return
+  }
+  defer f.Close()
+  _, err = f.WriteString("1")
+  if err != nil {
+    fmt.Println(err)
+    return
+  }
+  return
 }
