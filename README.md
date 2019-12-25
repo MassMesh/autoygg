@@ -51,6 +51,7 @@ Example session:
 ---
 ListenHost: "the:yggdrasil:ip:address:of:this:machine"
 AllowRegistration: true
+WhitelistEnabled: false
 GatewayTunnelIP: "10.42.0.1"
 GatewayTunnelNetmask: "16"
 ```
@@ -60,6 +61,16 @@ Get the value for 'ListenHost' by running
 ```
 yggdrasilctl getSelf
 ```
+
+*WARNING*: in this configuration, this autoygg server will provide internet egress to any client that registers itself. To limit which clients can use the server, change WhitelistEnabled to *true* in config.yaml and create a file named /etc/autoygg/whitelist.yaml. Add your client whitelist to that file, e.g. like this:
+
+```
+---
+Whitelist:
+- 200:1234:5678:9000:0000:0000:0000:0001
+```
+
+Note: the `autoygg-server` program will automatically refresh all its config files when they change. There is no need to restart it after modifying the main config file, the whitelist or blacklist.
 
 2) run autoygg-server, e.g. in screen:
 
