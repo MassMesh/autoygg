@@ -1,4 +1,6 @@
 
+[![Go Report Card](https://goreportcard.com/badge/github.com/cure/autoygg)](https://goreportcard.com/report/github.com/cure/autoygg)
+
 Autoygg is a tool to automatically configure an internet egress node on an
 [yggdrasil](https://yggdrasil-network.github.io/) network.
 
