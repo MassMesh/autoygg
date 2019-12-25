@@ -1,9 +1,11 @@
 package internal
 
 import (
+//  "bufio"
   "errors"
   "fmt"
   "github.com/gin-gonic/gin"
+  "github.com/fsnotify/fsnotify"
   "github.com/spf13/viper"
   "github.com/prometheus/client_golang/prometheus"
   "github.com/zsais/go-gin-prometheus"
@@ -13,10 +15,11 @@ import (
   "net"
   "net/http"
   "os"
-  "os/exec"
-  "strings"
   "time"
 )
+
+var whitelist map[string]bool
+var blacklist map[string]bool
 
 var errorCount = prometheus.NewCounterVec(
   prometheus.CounterOpts{
@@ -27,7 +30,9 @@ var errorCount = prometheus.NewCounterVec(
 )
 
 func incErrorCount(errorType string) {
-  errorCount.WithLabelValues(errorType).Inc()
+  if EnablePrometheus {
+    errorCount.WithLabelValues(errorType).Inc()
+  }
 }
 
 func enablePrometheusEndpoint() (p *ginprometheus.Prometheus) {
@@ -36,14 +41,51 @@ func enablePrometheusEndpoint() (p *ginprometheus.Prometheus) {
   return
 }
 
+func RegistrationAllowed(address string) bool {
+  if ! viper.GetBool("AllowRegistration") {
+    // Registration is disabled. Reject.
+    if Debug {
+      fmt.Printf("Registration is disabled, rejecting request from %s\n",address)
+    }
+    return false
+  }
+
+  if viper.GetBool("BlacklistEnabled") {
+    if _, found := blacklist[address]; found {
+      // The address is on the blacklist. Reject.
+      if Debug {
+        fmt.Printf("This address is blacklisted, rejecting request from %s\n",address)
+      }
+      return false
+    }
+  }
+
+  if viper.GetBool("WhitelistEnabled") {
+    if _, found := whitelist[address]; found {
+      // The address is on the whitelist. Accept.
+      if Debug {
+        fmt.Printf("This address is whitelisted, accepted request from %s\n",address)
+      }
+      return true
+    }
+  } else {
+    // The whitelist is disabled and registration is allowed. Accept.
+    if Debug {
+      fmt.Printf("Whitelist disabled and registration is allowed, accepted request from %s\n",address)
+    }
+    return true
+  }
+  if Debug {
+    fmt.Printf("Whitelist enabled and registration is allowed, address not on whitelist, rejected request from %s\n",address)
+  }
+  return false
+}
+
 func registerHandler(db *gorm.DB, c *gin.Context) {
   var existingRegistration Registration
   statusCode := http.StatusOK
 
-  // FIXME take whitelist/blacklist into account
-  if ! viper.GetBool("AllowRegistration") {
-    statusCode = http.StatusForbidden
-    c.JSON(statusCode, existingRegistration)
+  if ! validateRegistration(c) {
     return
   }
 
@@ -115,14 +157,15 @@ func bindRegistration(c *gin.Context) (err error, registration Registration) {
   return
 }
 
-func validateRegistration(c *gin.Context) (err error) {
-  // FIXME take whitelist/blacklist into account
-  if ! viper.GetBool("AllowRegistration") {
-    c.JSON(http.StatusForbidden, Registration{Error: "Registration disabled on server"})
+func validateRegistration(c *gin.Context) bool {
+  // Is this address allowed to register?
+  if ! RegistrationAllowed(c.ClientIP()) {
+    c.JSON(http.StatusForbidden, Registration{Error: "Registration not allowed"})
     c.Abort()
-    return
+    incErrorCount("registration_denied")
+    return false
   }
-  return
+  return true
 }
 
 func authorized(db *gorm.DB, c *gin.Context) (err error, registration Registration, existingRegistration Registration) {
@@ -130,8 +173,8 @@ func authorized(db *gorm.DB, c *gin.Context) (err error, registration Registrati
   if err != nil {
     return
   }
-  err = validateRegistration(c)
-  if err != nil {
+  if ! validateRegistration(c) {
+    err = errors.New("Registration not allowed")
     return
   }
 
@@ -220,9 +263,7 @@ func newRegistrationHandler(db *gorm.DB, c *gin.Context) {
     return
   }
 
-  // FIXME take whitelist/blacklist into account
-  if ! viper.GetBool("AllowRegistration") {
-    c.JSON(http.StatusForbidden, Registration{Error: "Registration disabled on server"})
+  if ! validateRegistration(c) {
     return
   }
 
@@ -296,7 +337,6 @@ func QueueAddRemoteSubnet(db *gorm.DB, ID uint) {
   }
 }
 
-//FIXME refactor check out RemoveRemoteSubnet
 func ServerRemoveRemoteSubnet(db *gorm.DB, ID uint) {
   var registration Registration
   if result := db.First(&registration, ID); result.Error != nil {
@@ -305,18 +345,11 @@ func ServerRemoveRemoteSubnet(db *gorm.DB, ID uint) {
     return
   }
 
-  command := viper.GetString("GatewayRemoveRemoteSubnetCommand")
-  command = strings.Replace(command, "%%SUBNET%%", registration.ClientIP + "/32", -1)
-  command = strings.Replace(command, "%%CLIENT_PUBLIC_KEY%%", registration.PublicKey, -1)
-
-  fmt.Println(command)
-  commandSlice := strings.Split(command," ")
-  cmd := exec.Command(commandSlice[0],commandSlice[1:]...)
-  err := cmd.Run()
+  err := RemoteSubnetWorker("Remove", registration.ClientIP, registration.PublicKey)
 
   if err != nil {
     incErrorCount("yggdrasil")
-    log.Printf("Yggdrasil error, unable to run %s: %s", command, err)
+    log.Printf("%s", err)
     registration.State = "fail"
   } else {
     registration.State = "removed"
@@ -349,7 +382,7 @@ func SetupRouter(db *gorm.DB) (r *gin.Engine) {
       res := Info{
         GatewayOwner: viper.GetString("GatewayOwner"),
         Description: viper.GetString("GatewayDescription"),
-        RegistrationRequired: viper.GetBool("AllowRegistration") && len(viper.GetStringSlice("Whitelist")) != 0, // FIXME: what if you want to run an open gateway? RegistrationRequired: false would suggest that, but it can also mean registration is disabled. Seems suboptimal.
+        RegistrationRequired: viper.GetBool("AllowRegistration") && viper.GetBool("WhitelistEnabled"),
       }
       c.JSON(http.StatusOK, res)
     })
@@ -388,11 +421,9 @@ func loadConfigDefaults() {
   viper.SetDefault("ListenPort", "8080")
   viper.SetDefault("GatewayOwner", "Some One <someone@example.com>")
   viper.SetDefault("GatewayDescription", "This is an Yggdrasil gateway operated for fun.")
-  viper.SetDefault("AllowRegistration", false)
+  viper.SetDefault("AllowRegistration", true)
   viper.SetDefault("AutoApproveRegistration", false)
   viper.SetDefault("StateDir", "/var/lib/autoygg")
-  viper.SetDefault("Whitelist", []string{}) // Unset the Whitelist configuration value to disable the whitelist
-  viper.SetDefault("Blacklist", []string{}) // Unset the Blacklist configuration value to disable the blacklist
   viper.SetDefault("MaxClients", 10)
   viper.SetDefault("LeaseTimeoutSeconds", 14400) // Default to 4 hours
   viper.SetDefault("GatewayTunnelIP", "10.42.0.1")
@@ -401,6 +432,11 @@ func loadConfigDefaults() {
   viper.SetDefault("GatewayTunnelIPRangeMax", "10.42.42.255") // Maximum IP for "DHCP" range
   viper.SetDefault("GatewayAddRemoteSubnetCommand", "/usr/bin/yggdrasilctl addremotesubnet subnet=%%SUBNET%% box_pub_key=%%CLIENT_PUBLIC_KEY%%")
   viper.SetDefault("GatewayRemoveRemoteSubnetCommand", "/usr/bin/yggdrasilctl removeremotesubnet subnet=%%SUBNET%% box_pub_key=%%CLIENT_PUBLIC_KEY%%")
+  viper.SetDefault("WhitelistEnabled", true)
+  viper.SetDefault("WhitelistFile", "whitelist") // Name of the file that contains whitelisted clients, one per line. Omit .yaml extension.
+  viper.SetDefault("BlacklistEnabled", true)
+  viper.SetDefault("BlacklistFile", "blacklist") // Name of the file that contains blacklisted clients, one per line. Omit .yaml extension.
+  viper.SetDefault("Debug", false)
   err, gatewayPublicKey := GetSelfPublicKey()
   if err != nil {
     incErrorCount("yggdrasil")
@@ -425,6 +461,8 @@ func LoadConfig(path string) {
     config = viper.Get("CONFIG").(string)
   }
 
+  // Load the main config file
+  viper.SetConfigType("yaml")
   viper.SetConfigName(config)
   viper.AddConfigPath(path)
   viper.AddConfigPath("/etc/autoygg/")
@@ -434,6 +472,89 @@ func LoadConfig(path string) {
   if err != nil {
     Fatal(fmt.Sprintln("Fatal error reading config file:", err.Error()))
   }
+
+  initializeViperList("Whitelist", path, &whitelist)
+  initializeViperList("Blacklist", path, &blacklist)
+
+  viper.WatchConfig() // Automatically reload the main config when it changes
+  viper.OnConfigChange(func(e fsnotify.Event) {
+    Debug = viper.GetBool("Debug")
+    fmt.Println("Config file changed:", e.Name)
+  })
+  Debug = viper.GetBool("Debug")
+}
+
+
+func initializeViperList(name string, path string, list *map[string]bool) {
+  if viper.GetBool(name + "Enabled") {
+    // Viper only supports watching one config file at the moment (cf issue #631)
+    // Set up an additional viper for this list
+    localViper := viper.New()
+    localViper.SetConfigType("yaml")
+    localViper.SetConfigName(viper.GetString(name + "File"))
+    localViper.AddConfigPath(path)
+    localViper.AddConfigPath("/etc/autoygg/")
+    localViper.AddConfigPath("$HOME/.autoygg")
+    localViper.AddConfigPath(".")
+
+    err := localViper.ReadInConfig()
+    if err != nil {
+      if _, ok := err.(viper.ConfigFileNotFoundError); ok {
+        fmt.Printf("Warning: config file `%s.yaml` not found\n",viper.GetString(name + "File"))
+        err = nil
+      } else {
+        Fatal(fmt.Sprintf("while reading config file `%s.yaml`: %s\n", viper.GetString(name + "File"), err.Error()))
+      }
+    } else {
+      *list = loadList(name,localViper)
+      localViper.WatchConfig() // Automatically reload the config files when they change
+      localViper.OnConfigChange(func(e fsnotify.Event) {
+        fmt.Println("Config file changed:", e.Name)
+        *list = loadList(name,localViper)
+      })
+    }
+  }
+}
+
+// convert the whitelist/blacklist viper slices into a map for cheap lookup
+func loadList(name string, localViper *viper.Viper) map[string]bool {
+  list := make(map[string]bool)
+  if !viper.GetBool(name + "Enabled") {
+    fmt.Printf("%sEnabled is not set",name)
+    return list
+  }
+  slice := localViper.GetStringSlice(name)
+  for i := 0; i < len(slice); i +=1 {
+    if ValidYggdrasilAddress(slice[i]) {
+      list[slice[i]] = true
+    } else {
+      fmt.Printf("Warning: %s: skipping invalid address %s\n",name,slice[i])
+    }
+  }
+  return list
+}
+
+// Test if the address is a valid Yggdrasil address
+func ValidYggdrasilAddress(address string) bool {
+  ip := net.ParseIP(address)
+  if ip == nil {
+    // address is not parsable as an IP address
+    return false
+  }
+  if ip.To4() != nil {
+    // address is an IPv4 address
+    return false
+  }
+  _, IPNet, err := net.ParseCIDR("200::/7")
+  if err != nil {
+    // Something went wrong parsing the Yggdrasil subnet CIDR
+    return false
+  }
+  if !IPNet.Contains(ip) {
+    // address is not in the Yggdrasil subnet
+    return false
+  }
+  return true
 }
 
 func EnableIPForwarding() (err error) {
