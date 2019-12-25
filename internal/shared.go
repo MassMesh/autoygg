@@ -57,8 +57,8 @@ type Registration struct {
   Error             string
 }
 
-// Fatal error. Do not call this from the server code after
-// the initialization phase
+// Fatal error. Do not call this from the server code after the
+// initialization phase.
 func Fatal(err interface{}) {
   // Reset the log settings to the default
   log.SetFlags(log.LstdFlags)
