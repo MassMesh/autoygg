@@ -4,7 +4,6 @@ import (
   "fmt"
   "github.com/spf13/viper"
   "github.com/jinzhu/gorm"
-  _ "github.com/jinzhu/gorm/dialects/sqlite"
   "log"
   "os"
   "os/exec"
@@ -14,23 +13,22 @@ import (
   "time"
 )
 
-var Debug bool
-var Quiet bool
-var EnablePrometheus bool
+var debug bool
+var quiet bool
+var enablePrometheus bool
 
-type LogWriter struct {
+type logWriter struct {
 }
 
-func (writer LogWriter) Write(bytes []byte) (int, error) {
-  if !Quiet {
+func (writer logWriter) Write(bytes []byte) (int, error) {
+  if !quiet {
     // Strip the last character, it's a newline!
     return fmt.Printf("%-70s",string(bytes[:len(bytes)-1]))
-  } else {
-    return 0, nil
   }
+  return 0, nil
 }
 
-type Info struct {
+type info struct {
     GatewayOwner  string
     Description   string
     RegistrationRequired bool
@@ -42,8 +40,7 @@ type Info struct {
 // success: all set
 // fail: yggdrasil goroutine reported failure
 // removed: yggdrasil registration removed, pending deletion
-
-type Registration struct {
+type registration struct {
   gorm.Model
   State             string
   GatewayPublicKey  string
@@ -66,15 +63,15 @@ func Fatal(err interface{}) {
   log.Fatal("Error: ", err)
 }
 
-func AddTunnelIP(IPAddress string, NetMask int) (err error) {
-  return TunnelIPWorker("add", IPAddress, NetMask)
+func addTunnelIP(IPAddress string, NetMask int) (err error) {
+  return tunnelIPWorker("add", IPAddress, NetMask)
 }
 
-func RemoveTunnelIP(IPAddress string, NetMask int) (err error) {
-  return TunnelIPWorker("del", IPAddress, NetMask)
+func removeTunnelIP(IPAddress string, NetMask int) (err error) {
+  return tunnelIPWorker("del", IPAddress, NetMask)
 }
 
-func TunnelIPWorker(action string, IPAddress string, NetMask int) (err error) {
+func tunnelIPWorker(action string, IPAddress string, NetMask int) (err error) {
   out, err := exec.Command("ip","addr","list","tun0").Output()
   if err != nil {
     err = fmt.Errorf("Unable to run `ip addr list tun0`: %s", err)
@@ -93,16 +90,16 @@ func TunnelIPWorker(action string, IPAddress string, NetMask int) (err error) {
   return
 }
 
-func AddRemoteSubnet(Subnet string, PublicKey string) (err error) {
-  return RemoteSubnetWorker("Add", Subnet, PublicKey)
+func addRemoteSubnet(Subnet string, PublicKey string) (err error) {
+  return remoteSubnetWorker("Add", Subnet, PublicKey)
 }
 
-func RemoveRemoteSubnet(Subnet string, PublicKey string) (err error) {
-  return RemoteSubnetWorker("Remove", Subnet, PublicKey)
+func removeRemoteSubnet(Subnet string, PublicKey string) (err error) {
+  return remoteSubnetWorker("Remove", Subnet, PublicKey)
 }
 
-func RemoteSubnetWorker(Action string, Subnet string, PublicKey string) (err error) {
-  out, err := ExecuteYggdrasilCtl("getroutes")
+func remoteSubnetWorker(Action string, Subnet string, PublicKey string) (err error) {
+  out, err := executeYggdrasilCtl("getroutes")
   if err != nil {
     return
   }
@@ -129,17 +126,19 @@ func RemoteSubnetWorker(Action string, Subnet string, PublicKey string) (err err
   return
 }
 
-// ip ro add <peer_ip> via <wan_gw> dev <wan_dev>
-func AddPeerRoute (peer string, defaultGatewayIP string, defaultGatewayDevice string) (err error) {
-  return PeerRouteWorker("add", peer, defaultGatewayIP, defaultGatewayDevice)
+// addPeerRoute adds a route for an yggdrasil peer. It runs the command
+//   ip ro add <peer_ip> via <wan_gw> dev <wan_dev>
+func addPeerRoute (peer string, defaultGatewayIP string, defaultGatewayDevice string) (err error) {
+  return peerRouteWorker("add", peer, defaultGatewayIP, defaultGatewayDevice)
 }
 
-// ip ro del <peer_ip> via <wan_gw> dev <wan_dev>
-func RemovePeerRoute (peer string, defaultGatewayIP string, defaultGatewayDevice string) (err error) {
-  return PeerRouteWorker("del", peer, defaultGatewayIP, defaultGatewayDevice)
+// removePeerRoute removes a route for an yggdrasil peer. It runs the command
+//   ip ro del <peer_ip> via <wan_gw> dev <wan_dev>
+func removePeerRoute (peer string, defaultGatewayIP string, defaultGatewayDevice string) (err error) {
+  return peerRouteWorker("del", peer, defaultGatewayIP, defaultGatewayDevice)
 }
 
-func PeerRouteWorker (action string, peer string, defaultGatewayIP string, defaultGatewayDevice string) (err error) {
+func peerRouteWorker (action string, peer string, defaultGatewayIP string, defaultGatewayDevice string) (err error) {
   cmdArgs := []string{"ro","list",peer,"via",defaultGatewayIP,"dev",defaultGatewayDevice}
   out, err := exec.Command("ip",cmdArgs...).Output()
   if err != nil {
@@ -159,16 +158,17 @@ func PeerRouteWorker (action string, peer string, defaultGatewayIP string, defau
   return
 }
 
-// ip ro add default via <ygg_gateway_ip>
-func AddDefaultGateway(clientGateway string) (err error) {
-  return DefaultGatewayWorker("add",clientGateway)
+// addDefaultGateway adds a default route. It runs the command
+//   ip ro add default via <ygg_gateway_ip>
+func addDefaultGateway(clientGateway string) (err error) {
+  return defaultGatewayWorker("add",clientGateway)
 }
 
-func RemoveDefaultGateway(clientGateway string) (err error) {
-  return DefaultGatewayWorker("del",clientGateway)
+func removeDefaultGateway(clientGateway string) (err error) {
+  return defaultGatewayWorker("del",clientGateway)
 }
 
-func DefaultGatewayWorker(action string, clientGateway string) (err error) {
+func defaultGatewayWorker(action string, clientGateway string) (err error) {
   cmdArgs := []string{"ro",action,"default","via",clientGateway}
   _, err = exec.Command("ip",cmdArgs...).Output()
   if err != nil {
@@ -178,23 +178,28 @@ func DefaultGatewayWorker(action string, clientGateway string) (err error) {
 }
 
 
+// yggdrasilPeers returns the list of yggdrasil peers. It parses the output of 
+// `yggdrasilctl getPeers`, e.g.:
 //                                        bytes_recvd    bytes_sent    endpoint                                      port  proto  uptime
 //200:40ff:e447:5bb6:13ee:8a9a:e71d:b6ee  817789         0             tcp://[fe80::109a:683d:a72:c4f5%wlan0]:45279  2     tcp    11:16:30
 //201:44e1:28f0:af3c:cf1b:6e2a:79bd:44b0  14578499       14497520      tcp://50.236.201.218:56088                    3     tcp    11:15:45
-func YggdrasilPeers() (peers []string, err error) {
-  err, selfAddress := GetSelfAddress()
+func yggdrasilPeers() (peers []string, err error) {
+  selfAddress, err := getSelfAddress()
+  if err != nil {
+    return
+  }
 
-  out, err := ExecuteYggdrasilCtl("getPeers")
+  out, err := executeYggdrasilCtl("getPeers")
   if err != nil {
     return
   }
   var matched bool
+  re, err := regexp.Compile("^2")
+  if err != nil {
+    return
+  }
   for _, l := range strings.Split(string(out), "\n") {
-    matched, err = regexp.MatchString("^2", l)
-    if err != nil {
-      return
-    }
-
+    matched = re.MatchString(l)
     if !matched {
       // Not a line that starts with a peer address
       continue
@@ -215,7 +220,7 @@ func YggdrasilPeers() (peers []string, err error) {
   return
 }
 
-func ExecuteYggdrasilCtl(cmd ...string) (out []byte, err error) {
+func executeYggdrasilCtl(cmd ...string) (out []byte, err error) {
   out, err = exec.Command("yggdrasilctl",cmd...).Output()
   if err != nil {
     err = fmt.Errorf("Unable to run `yggdrasilctl %s`: %s", strings.Join(cmd," "), err)
@@ -223,16 +228,16 @@ func ExecuteYggdrasilCtl(cmd ...string) (out []byte, err error) {
   return
 }
 
-func EnableTunnelRouting() (err error) {
-  return TunnelRoutingWorker("true")
+func enableTunnelRouting() (err error) {
+  return tunnelRoutingWorker("true")
 }
 
-func DisableTunnelRouting() (err error) {
-  return TunnelRoutingWorker("false")
+func disableTunnelRouting() (err error) {
+  return tunnelRoutingWorker("false")
 }
 
-func TunnelRoutingWorker(State string) (err error) {
-  out, err := ExecuteYggdrasilCtl("gettunnelrouting")
+func tunnelRoutingWorker(State string) (err error) {
+  out, err := executeYggdrasilCtl("gettunnelrouting")
   if err != nil {
     return
   }
@@ -250,7 +255,7 @@ func TunnelRoutingWorker(State string) (err error) {
     }
   }
 
-  _, err = ExecuteYggdrasilCtl("settunnelrouting", "enabled=" + State)
+  _, err = executeYggdrasilCtl("settunnelrouting", "enabled=" + State)
   if err != nil {
     return
   }
@@ -258,16 +263,16 @@ func TunnelRoutingWorker(State string) (err error) {
   return
 }
 
-func AddLocalSubnet(Subnet string) (err error) {
-  return LocalSubnetWorker("add", Subnet)
+func addLocalSubnet(Subnet string) (err error) {
+  return localSubnetWorker("add", Subnet)
 }
 
-func RemoveLocalSubnet(Subnet string) (err error) {
-  return LocalSubnetWorker("remove", Subnet)
+func removeLocalSubnet(Subnet string) (err error) {
+  return localSubnetWorker("remove", Subnet)
 }
 
-func LocalSubnetWorker(Action string, Subnet string) (err error) {
-  out, err := ExecuteYggdrasilCtl("getsourcesubnets")
+func localSubnetWorker(Action string, Subnet string) (err error) {
+  out, err := executeYggdrasilCtl("getsourcesubnets")
   if err != nil {
     return
   }
@@ -277,7 +282,7 @@ func LocalSubnetWorker(Action string, Subnet string) (err error) {
     return
   }
 
-  _, err = ExecuteYggdrasilCtl(Action + "localsubnet", "subnet=" + Subnet)
+  _, err = executeYggdrasilCtl(Action + "localsubnet", "subnet=" + Subnet)
   if err != nil {
     return
   }
@@ -285,8 +290,8 @@ func LocalSubnetWorker(Action string, Subnet string) (err error) {
   return
 }
 
-func GetSelfAddress() (err error, address string) {
-  out, err := ExecuteYggdrasilCtl("-v","getSelf")
+func getSelfAddress() (address string, err error) {
+  out, err := executeYggdrasilCtl("-v","getSelf")
   if err != nil {
     return
   }
@@ -304,8 +309,8 @@ func GetSelfAddress() (err error, address string) {
   return
 }
 
-func GetSelfPublicKey() (err error, publicKey string) {
-  out, err := ExecuteYggdrasilCtl("-v","getSelf")
+func getSelfPublicKey() (publicKey string, err error) {
+  out, err := executeYggdrasilCtl("-v","getSelf")
   if err != nil {
     return
   }
@@ -323,9 +328,9 @@ func GetSelfPublicKey() (err error, publicKey string) {
   return
 }
 
-func HandleError(err error, terminateOnFail bool) {
+func handleError(err error, terminateOnFail bool) {
   if err != nil {
-    if !Quiet {
+    if !quiet {
       fmt.Printf("[ FAIL ]\n")
       if terminateOnFail {
         os.Exit(1)
@@ -333,17 +338,17 @@ func HandleError(err error, terminateOnFail bool) {
     }
     fmt.Printf("-> %s\n", err)
   } else {
-    if !Quiet {
+    if !quiet {
       fmt.Printf("[ ok ]\n")
     }
   }
 }
 
-func SetupLogWriter() {
-  // Initialize our own LogWriter that right justifies all lines at 70 characters
+func setupLogWriter() {
+  // Initialize our own logWriter that right justifies all lines at 70 characters
   // and removes the trailing newline from log statements. Used for status lines
   // where we want to write something, then execute a command, and follow with
   // [ok] or [FAIL] on the same line.
   log.SetFlags(0)
-  log.SetOutput(new(LogWriter))
+  log.SetOutput(new(logWriter))
 }

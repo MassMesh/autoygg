@@ -15,6 +15,7 @@ coverprofile_html:
 	go tool cover -html=coverage.out
 
 lint:
+	cd ../../internal && golint; golangci-lint run
 	golangci-lint run
 
 compress: build

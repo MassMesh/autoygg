@@ -2,7 +2,7 @@
 Autoygg is a tool to automatically configure an internet egress node on an
 [yggdrasil](https://yggdrasil-network.github.io/) network.
 
-There is a server component (autoygg-server) which acts as egress gatekeeyper
+There is a server component (autoygg-server) which acts as egress gatekeeper
 on an yggdrasil node with internet access (e.g. a VPS in the cloud). It has a
 REST api that is consumed by the client component (autoygg-client).
 

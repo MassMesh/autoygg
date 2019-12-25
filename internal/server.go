@@ -10,7 +10,7 @@ import (
   "github.com/prometheus/client_golang/prometheus"
   "github.com/zsais/go-gin-prometheus"
   "github.com/jinzhu/gorm"
-  _ "github.com/jinzhu/gorm/dialects/sqlite"
+  _ "github.com/jinzhu/gorm/dialects/sqlite" // sql driver
   "log"
   "net"
   "net/http"
@@ -30,7 +30,7 @@ var errorCount = prometheus.NewCounterVec(
 )
 
 func incErrorCount(errorType string) {
-  if EnablePrometheus {
+  if enablePrometheus {
     errorCount.WithLabelValues(errorType).Inc()
   }
 }
@@ -41,10 +41,10 @@ func enablePrometheusEndpoint() (p *ginprometheus.Prometheus) {
   return
 }
 
-func RegistrationAllowed(address string) bool {
+func registrationAllowed(address string) bool {
   if ! viper.GetBool("AllowRegistration") {
     // Registration is disabled. Reject.
-    if Debug {
+    if debug {
       fmt.Printf("Registration is disabled, rejecting request from %s\n",address)
     }
     return false
@@ -53,7 +53,7 @@ func RegistrationAllowed(address string) bool {
   if viper.GetBool("BlacklistEnabled") {
     if _, found := blacklist[address]; found {
       // The address is on the blacklist. Reject.
-      if Debug {
+      if debug {
         fmt.Printf("This address is blacklisted, rejecting request from %s\n",address)
       }
       return false
@@ -63,26 +63,26 @@ func RegistrationAllowed(address string) bool {
   if viper.GetBool("WhitelistEnabled") {
     if _, found := whitelist[address]; found {
       // The address is on the whitelist. Accept.
-      if Debug {
+      if debug {
         fmt.Printf("This address is whitelisted, accepted request from %s\n",address)
       }
       return true
     }
   } else {
     // The whitelist is disabled and registration is allowed. Accept.
-    if Debug {
+    if debug {
       fmt.Printf("Whitelist disabled and registration is allowed, accepted request from %s\n",address)
     }
     return true
   }
-  if Debug {
+  if debug {
     fmt.Printf("Whitelist enabled and registration is allowed, address not on whitelist, rejected request from %s\n",address)
   }
   return false
 }
 
 func registerHandler(db *gorm.DB, c *gin.Context) {
-  var existingRegistration Registration
+  var existingRegistration registration
   statusCode := http.StatusOK
 
   if ! validateRegistration(c) {
@@ -96,7 +96,7 @@ func registerHandler(db *gorm.DB, c *gin.Context) {
     } else {
       incErrorCount("internal")
       log.Println("Internal error, unable to execute query:", result.Error)
-      c.JSON(http.StatusInternalServerError, Registration{Error: "Internal Server Error"})
+      c.JSON(http.StatusInternalServerError, registration{Error: "Internal Server Error"})
       return
     }
   }
@@ -133,23 +133,23 @@ func newIPAddress(db *gorm.DB) (IPAddress string) {
   IP := net.ParseIP(ipMin)
   for count == 0 && IP.String() != ipMax {
     IP = nextIP(IP, 1)
-    db.Model(&Registration{}).Where("client_ip = ?", IP).Count(&count)
+    db.Model(&registration{}).Where("client_ip = ?", IP).Count(&count)
   }
   return IP.String()
 }
 
-func bindRegistration(c *gin.Context) (err error, registration Registration) {
-  if e := c.BindJSON(&registration); e != nil {
-    c.JSON(http.StatusBadRequest, Registration{Error: "Malformed json request"})
+func bindRegistration(c *gin.Context) (r registration, err error) {
+  if e := c.BindJSON(&r); e != nil {
+    c.JSON(http.StatusBadRequest, registration{Error: "Malformed json request"})
     c.Abort()
     err = e
     return
   }
-  if len(registration.PublicKey) != 64 {
-    c.JSON(http.StatusBadRequest, Registration{Error: "Malformed json request: PublicKey length incorrect"})
+  if len(r.PublicKey) != 64 {
+    c.JSON(http.StatusBadRequest, registration{Error: "Malformed json request: PublicKey length incorrect"})
     c.Abort()
     err = errors.New("Malformed json request: PublicKey length incorrect")
-    registration = Registration{}
+    r = registration{}
     return
   }
   // FIXME validate that provided public key matches IPv6 address
@@ -159,8 +159,8 @@ func bindRegistration(c *gin.Context) (err error, registration Registration) {
 
 func validateRegistration(c *gin.Context) bool {
   // Is this address allowed to register?
-  if ! RegistrationAllowed(c.ClientIP()) {
-    c.JSON(http.StatusForbidden, Registration{Error: "Registration not allowed"})
+  if ! registrationAllowed(c.ClientIP()) {
+    c.JSON(http.StatusForbidden, registration{Error: "Registration not allowed"})
     c.Abort()
     incErrorCount("registration_denied")
     return false
@@ -168,8 +168,8 @@ func validateRegistration(c *gin.Context) bool {
   return true
 }
 
-func authorized(db *gorm.DB, c *gin.Context) (err error, registration Registration, existingRegistration Registration) {
-  err, registration = bindRegistration(c)
+func authorized(db *gorm.DB, c *gin.Context) (r registration, existingRegistration registration,err error) {
+  r, err = bindRegistration(c)
   if err != nil {
     return
   }
@@ -180,24 +180,23 @@ func authorized(db *gorm.DB, c *gin.Context) (err error, registration Registrati
 
   if result := db.Where("ygg_ip = ?",c.ClientIP()).First(&existingRegistration); result.Error != nil {
     if gorm.IsRecordNotFoundError(result.Error) {
-      c.JSON(http.StatusNotFound, Registration{Error: "Registration not found"})
-      c.Abort()
-      err = result.Error
-      return
-    } else {
-      incErrorCount("internal")
-      log.Println("Internal error, unable to execute query:", result.Error)
-      c.JSON(http.StatusInternalServerError, gin.H{"Error": "Internal Server Error"})
+      c.JSON(http.StatusNotFound, registration{Error: "Registration not found"})
       c.Abort()
       err = result.Error
       return
     }
+    incErrorCount("internal")
+    log.Println("Internal error, unable to execute query:", result.Error)
+    c.JSON(http.StatusInternalServerError, gin.H{"Error": "Internal Server Error"})
+    c.Abort()
+    err = result.Error
+    return
   }
   return
 }
 
 func renewHandler(db *gorm.DB, c *gin.Context) {
-  err, registration, existingRegistration := authorized(db,c)
+  registration, existingRegistration, err := authorized(db,c)
   if err != nil {
     return
   }
@@ -220,15 +219,14 @@ func renewHandler(db *gorm.DB, c *gin.Context) {
   }
 
   if registration.State == "open" {
-    QueueAddRemoteSubnet(db,registration.ID)
+    queueAddRemoteSubnet(db,registration.ID)
   }
 
   c.JSON(http.StatusOK, registration)
-  return
 }
 
 func releaseHandler(db *gorm.DB, c *gin.Context) {
-  err, registration, existingRegistration := authorized(db,c)
+  registration, existingRegistration, err := authorized(db,c)
   if err != nil {
     return
   }
@@ -245,21 +243,20 @@ func releaseHandler(db *gorm.DB, c *gin.Context) {
   }
 
   // FIXME do not do this inline
-  ServerRemoveRemoteSubnet(db, registration.ID)
+  serverRemoveRemoteSubnet(db, registration.ID)
 
   c.JSON(http.StatusOK, registration)
-  return
 }
 
 
 func newRegistrationHandler(db *gorm.DB, c *gin.Context) {
-  var newRegistration Registration
+  var newRegistration registration
   if err := c.BindJSON(&newRegistration); err != nil {
-    c.JSON(http.StatusBadRequest, Registration{Error: "Malformed json request"})
+    c.JSON(http.StatusBadRequest, registration{Error: "Malformed json request"})
     return
   }
   if len(newRegistration.PublicKey) != 64 {
-    c.JSON(http.StatusBadRequest, Registration{Error: "Malformed json request: PublicKey length incorrect"})
+    c.JSON(http.StatusBadRequest, registration{Error: "Malformed json request: PublicKey length incorrect"})
     return
   }
 
@@ -269,7 +266,7 @@ func newRegistrationHandler(db *gorm.DB, c *gin.Context) {
 
   // Assign a client IP and save it in the database
   // FIXME verify ipv6 <=> public key
-  var existingRegistration Registration
+  var existingRegistration registration
   if result := db.Where("public_key = ?",newRegistration.PublicKey).First(&existingRegistration); result.Error != nil {
     // IsRecordNotFound is normal if we haven't seen this public key before
     if ! gorm.IsRecordNotFoundError(result.Error) {
@@ -280,7 +277,7 @@ func newRegistrationHandler(db *gorm.DB, c *gin.Context) {
     }
   }
 
-  if existingRegistration == (Registration{}) {
+  if existingRegistration == (registration{}) {
     // First time we've seen this public key
     newRegistration.ClientIP = newIPAddress(db)
     newRegistration.ClientNetMask = viper.GetInt("GatewayTunnelNetMask")
@@ -299,63 +296,62 @@ func newRegistrationHandler(db *gorm.DB, c *gin.Context) {
   if result := db.Save(&newRegistration); result.Error != nil {
     incErrorCount("internal")
     log.Println("Internal error, unable to execute query:", result.Error)
-    c.JSON(http.StatusInternalServerError, Registration{Error: "Internal Server Error"})
+    c.JSON(http.StatusInternalServerError, registration{Error: "Internal Server Error"})
     return
   }
-  QueueAddRemoteSubnet(db,newRegistration.ID)
+  queueAddRemoteSubnet(db,newRegistration.ID)
 
   c.JSON(http.StatusOK, newRegistration)
-  return
 }
 
-func QueueAddRemoteSubnet(db *gorm.DB, ID uint) {
-  var registration Registration
-  if result := db.First(&registration, ID); result.Error != nil {
+func queueAddRemoteSubnet(db *gorm.DB, ID uint) {
+  var r registration
+  if result := db.First(&r, ID); result.Error != nil {
     incErrorCount("internal")
     log.Println("Internal error, unable to execute query:", result.Error)
     return
   }
-  if registration.State != "open" && registration.State != "fail" {
+  if r.State != "open" && r.State != "fail" {
     // Nothing to do!
     return
   }
   // FIXME: actually queue this, rather than doing it inline
-  err := AddRemoteSubnet(registration.ClientIP + "/32", registration.PublicKey)
+  err := addRemoteSubnet(r.ClientIP + "/32", r.PublicKey)
 
   if err != nil {
     incErrorCount("yggdrasil")
     log.Printf("Yggdrasil error, unable to run command: %s", err)
-    registration.State = "fail"
+    r.State = "fail"
   } else {
-    registration.State = "success"
+    r.State = "success"
   }
 
-  if result := db.Save(&registration); result.Error != nil {
+  if result := db.Save(&r); result.Error != nil {
     incErrorCount("internal")
     log.Println("Internal error, unable to execute query:", result.Error)
     return
   }
 }
 
-func ServerRemoveRemoteSubnet(db *gorm.DB, ID uint) {
-  var registration Registration
-  if result := db.First(&registration, ID); result.Error != nil {
+func serverRemoveRemoteSubnet(db *gorm.DB, ID uint) {
+  var r registration
+  if result := db.First(&r, ID); result.Error != nil {
     incErrorCount("internal")
     log.Println("Internal error, unable to execute query:", result.Error)
     return
   }
 
-  err := RemoteSubnetWorker("Remove", registration.ClientIP, registration.PublicKey)
+  err := remoteSubnetWorker("Remove", r.ClientIP, r.PublicKey)
 
   if err != nil {
     incErrorCount("yggdrasil")
     log.Printf("%s", err)
-    registration.State = "fail"
+    r.State = "fail"
   } else {
-    registration.State = "removed"
+    r.State = "removed"
   }
 
-  if result := db.Delete(&registration); result.Error != nil {
+  if result := db.Delete(&r); result.Error != nil {
     incErrorCount("internal")
     log.Println("Internal error, unable to execute query:", result.Error)
     return
@@ -363,23 +359,23 @@ func ServerRemoveRemoteSubnet(db *gorm.DB, ID uint) {
 }
 
 
-func SetupRouter(db *gorm.DB) (r *gin.Engine) {
+func setupRouter(db *gorm.DB) (r *gin.Engine) {
   gin.SetMode(gin.ReleaseMode)
   r = gin.Default()
 
-  if EnablePrometheus {
+  if enablePrometheus {
     p := enablePrometheusEndpoint()
     p.Use(r)
     err := prometheus.Register(errorCount)
     log.Printf("Enabling Prometheus endpoint")
-    HandleError(err,false)
+    handleError(err,false)
   }
 
   // Define routes for unauthenticated requests
   noAuth := r.Group("/")
   {
     noAuth.GET("/info", func(c *gin.Context) {
-      res := Info{
+      res := info{
         GatewayOwner: viper.GetString("GatewayOwner"),
         Description: viper.GetString("GatewayDescription"),
         RegistrationRequired: viper.GetBool("AllowRegistration") && viper.GetBool("WhitelistEnabled"),
@@ -403,7 +399,7 @@ func SetupRouter(db *gorm.DB) (r *gin.Engine) {
   return
 }
 
-func SetupDB(driver string, credentials string) (db *gorm.DB) {
+func setupDB(driver string, credentials string) (db *gorm.DB) {
   db, err := gorm.Open(driver, credentials)
   if err != nil {
     Fatal("Couldn't initialize database connection")
@@ -411,7 +407,7 @@ func SetupDB(driver string, credentials string) (db *gorm.DB) {
   db.LogMode(true)
 
   // Migrate the schema
-  db.AutoMigrate(&Registration{})
+  db.AutoMigrate(&registration{})
 
   return
 }
@@ -437,7 +433,7 @@ func loadConfigDefaults() {
   viper.SetDefault("BlacklistEnabled", true)
   viper.SetDefault("BlacklistFile", "blacklist") // Name of the file that contains blacklisted clients, one per line. Omit .yaml extension.
   viper.SetDefault("Debug", false)
-  err, gatewayPublicKey := GetSelfPublicKey()
+  gatewayPublicKey, err := getSelfPublicKey()
   if err != nil {
     incErrorCount("yggdrasil")
     log.Printf("Error: unable to run yggdrasilctl: %s",err)
@@ -447,7 +443,7 @@ func loadConfigDefaults() {
 
 }
 
-func LoadConfig(path string) {
+func loadConfig(path string) {
   loadConfigDefaults()
 
   viper.SetEnvPrefix("AUTOYGG") // will be uppercased automatically
@@ -478,10 +474,10 @@ func LoadConfig(path string) {
 
   viper.WatchConfig() // Automatically reload the main config when it changes
   viper.OnConfigChange(func(e fsnotify.Event) {
-    Debug = viper.GetBool("Debug")
+    debug = viper.GetBool("Debug")
     fmt.Println("Config file changed:", e.Name)
   })
-  Debug = viper.GetBool("Debug")
+  debug = viper.GetBool("Debug")
 }
 
 
@@ -524,7 +520,7 @@ func loadList(name string, localViper *viper.Viper) map[string]bool {
     return list
   }
   slice := localViper.GetStringSlice(name)
-  for i := 0; i < len(slice); i +=1 {
+  for i := 0; i < len(slice); i++ {
     if ValidYggdrasilAddress(slice[i]) {
       list[slice[i]] = true
     } else {
@@ -534,7 +530,8 @@ func loadList(name string, localViper *viper.Viper) map[string]bool {
   return list
 }
 
-// Test if the address is a valid Yggdrasil address
+// ValidYggdrasilAddress tests if an address is a valid Yggdrasil IPv6 address
+// in the 200::/7 block
 func ValidYggdrasilAddress(address string) bool {
   ip := net.ParseIP(address)
   if ip == nil {
@@ -557,7 +554,7 @@ func ValidYggdrasilAddress(address string) bool {
   return true
 }
 
-func EnableIPForwarding() (err error) {
+func enableIPForwarding() (err error) {
   f, err := os.OpenFile("/proc/sys/net/ipv4/ip_forward",os.O_RDWR,0644)
   if err != nil {
     return
@@ -571,28 +568,29 @@ func EnableIPForwarding() (err error) {
   return
 }
 
+// ServerMain is the main() function for the server program
 func ServerMain() {
-  SetupLogWriter()
+  setupLogWriter()
 
   // Enable the Prometheus endpoint
-  EnablePrometheus = true
+  enablePrometheus = true
 
-  LoadConfig("")
-  db := SetupDB("sqlite3",viper.GetString("StateDir") + "/autoygg.db")
+  loadConfig("")
+  db := setupDB("sqlite3",viper.GetString("StateDir") + "/autoygg.db")
   defer db.Close()
-  r := SetupRouter(db)
+  r := setupRouter(db)
   log.Printf("Enabling IP forwarding")
-  err := EnableIPForwarding()
-  HandleError(err,true)
+  err := enableIPForwarding()
+  handleError(err,true)
   log.Printf("Enabling Yggdrasil tunnel routing")
-  err = EnableTunnelRouting()
-  HandleError(err,true)
+  err = enableTunnelRouting()
+  handleError(err,true)
   log.Printf("Adding Yggdrasil local subnet 0.0.0.0/0")
-  err = AddLocalSubnet("0.0.0.0/0")
-  HandleError(err,true)
+  err = addLocalSubnet("0.0.0.0/0")
+  handleError(err,true)
   log.Printf("Adding tunnel IP %s/%d",viper.GetString("GatewayTunnelIP"),viper.GetInt("GatewayTunnelNetmask"))
-  err = AddTunnelIP(viper.GetString("GatewayTunnelIP"),viper.GetInt("GatewayTunnelNetmask"))
-  HandleError(err,true)
+  err = addTunnelIP(viper.GetString("GatewayTunnelIP"),viper.GetInt("GatewayTunnelNetmask"))
+  handleError(err,true)
   // FIXME todo defer tearing down the config we added?
   r.Run("[" + viper.GetString("ListenHost")+"]:"+viper.GetString("ListenPort"))
 }
