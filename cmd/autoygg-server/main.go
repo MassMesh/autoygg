@@ -1,9 +1,9 @@
 package main
 
 import (
-  "github.com/massmesh/autoygg/internal"
+	"github.com/massmesh/autoygg/internal"
 )
 
 func main() {
-  internal.ServerMain()
+	internal.ServerMain()
 }
