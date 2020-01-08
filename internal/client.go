@@ -11,6 +11,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"gopkg.in/yaml.v2"
 )
 
 func clientUsage(fs *flag.FlagSet) {
@@ -20,6 +21,7 @@ autoygg-client is a tool to register an Yggdrasil node with a gateway for intern
 Options:
 `)
 	fs.PrintDefaults()
+	fmt.Fprintln(os.Stderr,"")
 }
 
 func doPostRequest(fs *flag.FlagSet, action string, gatewayHost string, gatewayPort string) (response []byte) {
@@ -145,45 +147,90 @@ func clientTearDownRoutes(clientIP string, clientNetMask int, clientGateway stri
 	return
 }
 
+func clientLoadConfig(path string) {
+  config := "client"
+  if viper.Get("CONFIG") != nil {
+    config = viper.Get("CONFIG").(string)
+  }
+
+  // Load the main config file
+  viper.SetConfigType("yaml")
+  viper.SetConfigName(config)
+  viper.AddConfigPath(path)
+  viper.AddConfigPath("/etc/autoygg/")
+  viper.AddConfigPath("$HOME/.autoygg")
+  viper.AddConfigPath(".")
+  err := viper.ReadInConfig()
+  if err != nil {
+    if _, ok := err.(viper.ConfigFileNotFoundError); ok {
+      // The client config file is optional
+      err = nil
+    } else {
+      Fatal(fmt.Sprintln("Fatal error reading config file:", err.Error()))
+    }
+  }
+}
+
+func dumpConfiguration() {
+  configMap := viper.AllSettings()
+  delete(configMap, "help") // do not include the "help" flag in the config dump
+  b, err := yaml.Marshal(configMap)
+	if err != nil {
+		Fatal(err)
+	}
+  fmt.Println("\nConfiguration as loaded from the config file and any command line arguments:\n")
+  fmt.Println(string(b))
+  os.Exit(0)
+}
+
 // ClientMain is the main() function for the client program
 func ClientMain() {
 	setupLogWriter()
-
-	var gatewayHost string
-	var gatewayPort string
-	var defaultGatewayIP string
-	var defaultGatewayDevice string
-	var action string
+  clientLoadConfig("")
 
 	fs := flag.NewFlagSet("Autoygg", flag.ContinueOnError)
 	fs.Usage = func() { clientUsage(fs) }
 
-	fs.StringVar(&gatewayHost, "gateway-host", "", "Yggdrasil IP address of the gateway host")
-	fs.StringVar(&gatewayPort, "gateway-port", "8080", "port of the gateway daemon")
-	fs.StringVar(&defaultGatewayIP, "wan-gw-ip", "", "LAN default gateway IP address (e.g. 192.168.1.1)")
-	fs.StringVar(&defaultGatewayDevice, "wan-gw-dev", "eth0", "LAN default gateway device")
-	fs.StringVar(&action, "action", "register", "action (register/renew/release)")
+	fs.String("gatewayHost", "", "Yggdrasil IP address of the gateway host")
+	fs.String("gatewayPort", "8080", "port of the gateway daemon")
+	fs.String("defaultGatewayIP", "", "LAN default gateway IP address (e.g. 192.168.1.1)")
+	fs.String("defaultGatewayDev", "eth0", "LAN default gateway device")
+	fs.String("action", "register", "action (register/renew/release)")
+  // fixme remove the global debug bar, we use viper everywhere now
 	fs.BoolVar(&debug, "debug", false, "debug output")
-	fs.BoolVar(&quiet, "quiet", false, "suppress non-error output")
+	fs.Bool("quiet", false, "suppress non-error output")
+	fs.Bool("dumpConfig", false, "dump the configuration that would be used by autoygg-client and exit")
+	fs.Bool("help", false, "print usage and exit")
 
 	err := fs.Parse(os.Args[1:])
 	if err != nil {
 		Fatal(err)
 	}
 
-	if gatewayHost == "" || action == "" {
+  viper.BindPFlags(fs)
+
+  if viper.GetBool("Help") {
+		clientUsage(fs)
+		os.Exit(1)
+ }
+
+  if viper.GetBool("DumpConfig") {
+    dumpConfiguration()
+  }
+
+	if viper.GetString("GatewayHost") == "" || viper.GetString("Action") == "" {
 		clientUsage(fs)
 		os.Exit(1)
 	}
 
-	response := doPostRequest(fs, action, gatewayHost, gatewayPort)
+	response := doPostRequest(fs, viper.GetString("Action"), viper.GetString("GatewayHost"), viper.GetString("GatewayPort"))
 	if debug {
 		fmt.Printf("Raw server response:\n\n%s\n\n", string(response))
 	}
 	var r registration
 	err = json.Unmarshal(response, &r)
 	if err != nil {
-		if action == "release" {
+		if viper.GetString("Action") == "release" {
 			// Do not abort when we are trying to release a lease, continue with the clientTearDownRoutes below
 			fmt.Println(err)
 		} else {
@@ -191,10 +238,10 @@ func ClientMain() {
 		}
 	}
 	if r.Error == "" {
-		if action == "release" {
-			err = clientTearDownRoutes(r.ClientIP, r.ClientNetMask, r.ClientGateway, r.GatewayPublicKey, defaultGatewayIP, defaultGatewayDevice)
+		if viper.GetString("Action") == "release" {
+			err = clientTearDownRoutes(r.ClientIP, r.ClientNetMask, r.ClientGateway, r.GatewayPublicKey, viper.GetString("DefaultGatewayIP"), viper.GetString("DefaultGatewayDev"))
 		} else {
-			err = clientSetupRoutes(r.ClientIP, r.ClientNetMask, r.ClientGateway, r.GatewayPublicKey, defaultGatewayIP, defaultGatewayDevice)
+			err = clientSetupRoutes(r.ClientIP, r.ClientNetMask, r.ClientGateway, r.GatewayPublicKey, viper.GetString("DefaultGatewayIP"), viper.GetString("DefaultGatewayDev"))
 		}
 		if err != nil {
 			Fatal(err)

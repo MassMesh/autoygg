@@ -14,14 +14,13 @@ import (
 )
 
 var debug bool
-var quiet bool
 var enablePrometheus bool
 
 type logWriter struct {
 }
 
 func (writer logWriter) Write(bytes []byte) (int, error) {
-	if !quiet {
+	if !viper.GetBool("Quiet") {
 		// Strip the last character, it's a newline!
 		return fmt.Printf("%-70s", string(bytes[:len(bytes)-1]))
 	}
@@ -329,7 +328,7 @@ func getSelfPublicKey() (publicKey string, err error) {
 
 func handleError(err error, terminateOnFail bool) {
 	if err != nil {
-		if !quiet {
+		if !viper.GetBool("Quiet") {
 			fmt.Printf("[ FAIL ]\n")
 			if terminateOnFail {
 				os.Exit(1)
@@ -337,7 +336,7 @@ func handleError(err error, terminateOnFail bool) {
 		}
 		fmt.Printf("-> %s\n", err)
 	} else {
-		if !quiet {
+		if !viper.GetBool("Quiet") {
 			fmt.Printf("[ ok ]\n")
 		}
 	}

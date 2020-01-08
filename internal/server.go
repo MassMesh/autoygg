@@ -450,7 +450,7 @@ func loadConfig(path string) {
 		Fatal(fmt.Sprintln("Fatal error:", err.Error()))
 	}
 
-	config := "config"
+	config := "server"
 	if viper.Get("CONFIG") != nil {
 		config = viper.Get("CONFIG").(string)
 	}

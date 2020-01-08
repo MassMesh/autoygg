@@ -47,7 +47,7 @@ $ GOARCH=arm64 make
 
 Example session:
 
-1) On the machine that will run *autoygg-server*, create a config file at /etc/autoygg/config.yaml, e.g. with these contents:
+1) On the machine that will run *autoygg-server*, create a config file at /etc/autoygg/server.yaml, e.g. with these contents:
 
 ```
 ---
@@ -64,7 +64,7 @@ Get the value for 'ListenHost' by running
 yggdrasilctl getSelf
 ```
 
-*WARNING*: in this configuration, this autoygg server will provide internet egress to any client that registers itself. To limit which clients can use the server, change WhitelistEnabled to *true* in config.yaml and create a file named /etc/autoygg/whitelist.yaml. Add your client whitelist to that file, e.g. like this:
+*WARNING*: in this configuration, this autoygg server will provide internet egress to any client that registers itself. To limit which clients can use the server, change WhitelistEnabled to *true* in server.yaml and create a file named /etc/autoygg/whitelist.yaml. Add your client whitelist to that file, e.g. like this:
 
 ```
 ---
