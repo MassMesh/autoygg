@@ -7,11 +7,11 @@ import (
 	flag "github.com/spf13/pflag"
 	//"github.com/brotherpowers/ipsubnet"
 	"github.com/spf13/viper"
+	"gopkg.in/yaml.v2"
 	"io/ioutil"
 	"log"
 	"net/http"
 	"os"
-	"gopkg.in/yaml.v2"
 )
 
 func clientUsage(fs *flag.FlagSet) {
@@ -21,7 +21,7 @@ autoygg-client is a tool to register an Yggdrasil node with a gateway for intern
 Options:
 `)
 	fs.PrintDefaults()
-	fmt.Fprintln(os.Stderr,"")
+	fmt.Fprintln(os.Stderr, "")
 }
 
 func doPostRequest(fs *flag.FlagSet, action string, gatewayHost string, gatewayPort string) (response []byte) {
@@ -148,45 +148,45 @@ func clientTearDownRoutes(clientIP string, clientNetMask int, clientGateway stri
 }
 
 func clientLoadConfig(path string) {
-  config := "client"
-  if viper.Get("CONFIG") != nil {
-    config = viper.Get("CONFIG").(string)
-  }
+	config := "client"
+	if viper.Get("CONFIG") != nil {
+		config = viper.Get("CONFIG").(string)
+	}
 
-  // Load the main config file
-  viper.SetConfigType("yaml")
-  viper.SetConfigName(config)
-  viper.AddConfigPath(path)
-  viper.AddConfigPath("/etc/autoygg/")
-  viper.AddConfigPath("$HOME/.autoygg")
-  viper.AddConfigPath(".")
-  err := viper.ReadInConfig()
-  if err != nil {
-    if _, ok := err.(viper.ConfigFileNotFoundError); ok {
-      // The client config file is optional
-      err = nil
-    } else {
-      Fatal(fmt.Sprintln("Fatal error reading config file:", err.Error()))
-    }
-  }
+	// Load the main config file
+	viper.SetConfigType("yaml")
+	viper.SetConfigName(config)
+	viper.AddConfigPath(path)
+	viper.AddConfigPath("/etc/autoygg/")
+	viper.AddConfigPath("$HOME/.autoygg")
+	viper.AddConfigPath(".")
+	err := viper.ReadInConfig()
+	if err != nil {
+		if _, ok := err.(viper.ConfigFileNotFoundError); ok {
+			// The client config file is optional
+			err = nil
+		} else {
+			Fatal(fmt.Sprintln("Fatal error reading config file:", err.Error()))
+		}
+	}
 }
 
 func dumpConfiguration() {
-  configMap := viper.AllSettings()
-  delete(configMap, "help") // do not include the "help" flag in the config dump
-  b, err := yaml.Marshal(configMap)
+	configMap := viper.AllSettings()
+	delete(configMap, "help") // do not include the "help" flag in the config dump
+	b, err := yaml.Marshal(configMap)
 	if err != nil {
 		Fatal(err)
 	}
-  fmt.Println("\nConfiguration as loaded from the config file and any command line arguments:\n")
-  fmt.Println(string(b))
-  os.Exit(0)
+	fmt.Println("\nConfiguration as loaded from the config file and any command line arguments:\n")
+	fmt.Println(string(b))
+	os.Exit(0)
 }
 
 // ClientMain is the main() function for the client program
 func ClientMain() {
 	setupLogWriter()
-  clientLoadConfig("")
+	clientLoadConfig("")
 
 	fs := flag.NewFlagSet("Autoygg", flag.ContinueOnError)
 	fs.Usage = func() { clientUsage(fs) }
@@ -196,7 +196,7 @@ func ClientMain() {
 	fs.String("defaultGatewayIP", "", "LAN default gateway IP address (e.g. 192.168.1.1)")
 	fs.String("defaultGatewayDev", "eth0", "LAN default gateway device")
 	fs.String("action", "register", "action (register/renew/release)")
-  // fixme remove the global debug bar, we use viper everywhere now
+	// fixme remove the global debug bar, we use viper everywhere now
 	fs.BoolVar(&debug, "debug", false, "debug output")
 	fs.Bool("quiet", false, "suppress non-error output")
 	fs.Bool("dumpConfig", false, "dump the configuration that would be used by autoygg-client and exit")
@@ -207,16 +207,16 @@ func ClientMain() {
 		Fatal(err)
 	}
 
-  viper.BindPFlags(fs)
+	viper.BindPFlags(fs)
 
-  if viper.GetBool("Help") {
+	if viper.GetBool("Help") {
 		clientUsage(fs)
 		os.Exit(1)
- }
+	}
 
-  if viper.GetBool("DumpConfig") {
-    dumpConfiguration()
-  }
+	if viper.GetBool("DumpConfig") {
+		dumpConfiguration()
+	}
 
 	if viper.GetString("GatewayHost") == "" || viper.GetString("Action") == "" {
 		clientUsage(fs)
