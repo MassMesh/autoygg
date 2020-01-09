@@ -49,7 +49,7 @@ Example session:
 
 1) Go to the machine that will run *autoygg-server*.
 
-The *autoygg-server* program will accept parameters in a configuration file named *server.yaml*, which can be located in */etc/autoygg/* or in the directory the *autoygg-server* binary is executed from. A few parameters may be specified as command line arguments. The complete list of parameters can be consulted by running *autoygg-server --help*, e.g.:
+The `autoygg-server` program will accept parameters in a configuration file named *server.yaml*, which can be located in */etc/autoygg/* or in the directory the *autoygg-server* binary is executed from. A few parameters may be specified as command line arguments. The complete list of parameters can be consulted by running *autoygg-server --help*, e.g.:
 
 ```
 $ ./autoygg-server --help
@@ -61,7 +61,7 @@ Options:
       --help         print usage and exit
 ```
 
-Create a config file at /etc/autoygg/server.yaml. A sample configuration file is provided in cmd/autoygg-server/server.yaml. A minimal configuration could be:
+Create a config file at */etc/autoygg/server.yaml*. A sample configuration file is provided in *cmd/autoygg-server/server.yaml*. A minimal configuration could be:
 
 ```
 ---
@@ -75,7 +75,7 @@ GatewayTunnelNetmask: "16"
 Get the value for 'ListenHost' by running
 
 ```
-yggdrasilctl getSelf
+$ yggdrasilctl getSelf
 ```
 
 *WARNING*: in this configuration, this autoygg server will provide internet egress to any client that registers itself. To limit which clients can use the server, change WhitelistEnabled to *true* in server.yaml and create a file named */etc/autoygg/whitelist.yaml*. Add your client yggdrasil IP to that file, e.g. like this:
@@ -88,15 +88,15 @@ Whitelist:
 
 Note: the `autoygg-server` program will automatically refresh all its config files when they change. There is no need to restart it after modifying the main config file, the whitelist or blacklist.
 
-2) run autoygg-server, e.g. in screen:
+2) run `autoygg-server`, e.g. in screen:
 
 ```
 ./autoygg-server
 ```
 
-3) Now switch to machine that will run *autoygg-client*. Because the client will reconfigure your local networking, it needs sufficient privileges to do so, e.g. by using sudo to invoke it.
+3) Now switch to machine that will run `autoygg-client`. Because the client will reconfigure your local networking, it needs sufficient privileges to do so, e.g. by using sudo to invoke it.
 
-The *autoygg-client* program will accept parameters in a configuration file named *client.yaml*, which can be located in */etc/autoygg/* or in the directory the *autoygg-client* binary is executed from. Parameters may also be specified as command line arguments. The complete list of parameters can be consulted by running *autoygg-client --help*, e.g.:
+The `autoygg-client` program will accept parameters in a configuration file named *client.yaml*, which can be located in */etc/autoygg/* or in the directory the *autoygg-client* binary is executed from. Parameters may also be specified as command line arguments. The complete list of parameters can be consulted by running *autoygg-client --help*, e.g.:
 
 ```
 $ ./autoygg-client --help
