@@ -1,0 +1,19 @@
+# This is a sample configuration file for the autoygg server
+---
+ListenHost: "the:yggdrasil:ip:address:of:the:autoygg:server"
+ListenPort: 8080
+GatewayOwner: "You <you@example.com>"
+GatewayDescription: "This is an Yggdrasil gateway operated for fun and profit"
+AllowRegistration: false
+StateDir: "/var/lib/autoygg"
+MaxClients: 10
+LeaseTimeoutSeconds: 14400
+GatewayTunnelIP: "10.42.0.1"
+GatewayTunnelNetmask: 16
+GatewayTunnelIPRangeMin: "10.42.42.1"
+GatewayTunnelIPRangeMax: "10.42.42.255"
+WhitelistEnabled: false
+WhitelistFile: "whitelist"
+BlacklistEnabled: false
+BlacklistFile: "whitelist"
+Debug: false

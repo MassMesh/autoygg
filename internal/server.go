@@ -1,7 +1,6 @@
 package internal
 
 import (
-	//  "bufio"
 	"errors"
 	"fmt"
 	"github.com/fsnotify/fsnotify"
@@ -9,6 +8,7 @@ import (
 	"github.com/jinzhu/gorm"
 	_ "github.com/jinzhu/gorm/dialects/sqlite" // sql driver
 	"github.com/prometheus/client_golang/prometheus"
+	flag "github.com/spf13/pflag"
 	"github.com/spf13/viper"
 	"github.com/zsais/go-gin-prometheus"
 	"log"
@@ -28,6 +28,16 @@ var errorCount = prometheus.NewCounterVec(
 	},
 	[]string{"type"},
 )
+
+func serverUsage(fs *flag.FlagSet) {
+	fmt.Fprintf(os.Stderr, `
+autoygg-server provides internet egress for Yggdrasil nodes running autoygg-client.
+
+Options:
+`)
+	fs.PrintDefaults()
+	fmt.Fprintln(os.Stderr, "")
+}
 
 func incErrorCount(errorType string) {
 	if enablePrometheus {
@@ -410,7 +420,7 @@ func setupDB(driver string, credentials string) (db *gorm.DB) {
 	return
 }
 
-func loadConfigDefaults() {
+func serverLoadConfigDefaults() {
 	viper.SetDefault("ListenHost", "::1")
 	viper.SetDefault("ListenPort", "8080")
 	viper.SetDefault("GatewayOwner", "Some One <someone@example.com>")
@@ -441,8 +451,8 @@ func loadConfigDefaults() {
 
 }
 
-func loadConfig(path string) {
-	loadConfigDefaults()
+func serverLoadConfig(path string) {
+	serverLoadConfigDefaults()
 
 	viper.SetEnvPrefix("AUTOYGG") // will be uppercased automatically
 	err := viper.BindEnv("CONFIG")
@@ -572,12 +582,37 @@ func ServerMain() {
 	// Enable the Prometheus endpoint
 	enablePrometheus = true
 
-	loadConfig("")
+	serverLoadConfig("")
+
+	fs := flag.NewFlagSet("Autoygg", flag.ContinueOnError)
+	fs.Usage = func() { serverUsage(fs) }
+	fs.Bool("dumpConfig", false, "dump the configuration that would be used by autoygg-server and exit")
+	fs.Bool("help", false, "print usage and exit")
+
+	err := fs.Parse(os.Args[1:])
+	if err != nil {
+		Fatal(err)
+	}
+
+  err = viper.BindPFlags(fs)
+	if err != nil {
+		Fatal(err)
+	}
+
+	if viper.GetBool("Help") {
+		serverUsage(fs)
+		os.Exit(1)
+	}
+
+	if viper.GetBool("DumpConfig") {
+		dumpConfiguration()
+	}
+
 	db := setupDB("sqlite3", viper.GetString("StateDir")+"/autoygg.db")
 	defer db.Close()
 	r := setupRouter(db)
 	log.Printf("Enabling IP forwarding")
-	err := enableIPForwarding()
+	err = enableIPForwarding()
 	handleError(err, true)
 	log.Printf("Enabling Yggdrasil tunnel routing")
 	err = enableTunnelRouting()

@@ -1,0 +1,8 @@
+# This is a sample configuration file for the autoygg client
+---
+GatewayHost: "the:yggdrasil:ip:address:of:the:autoygg:server"
+GatewayPort: "8080"
+DefaultGatewayDev: "eth0"
+DefaultGatewayIP: "192.168.1.1"
+Debug: false
+Quiet: false

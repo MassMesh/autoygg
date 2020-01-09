@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"github.com/jinzhu/gorm"
 	"github.com/spf13/viper"
+	"gopkg.in/yaml.v2"
 	"log"
 	"os"
 	"os/exec"
@@ -349,4 +350,16 @@ func setupLogWriter() {
 	// [ok] or [FAIL] on the same line.
 	log.SetFlags(0)
 	log.SetOutput(new(logWriter))
+}
+
+func dumpConfiguration() {
+	configMap := viper.AllSettings()
+	delete(configMap, "help") // do not include the "help" flag in the config dump
+	b, err := yaml.Marshal(configMap)
+	if err != nil {
+		Fatal(err)
+	}
+	fmt.Print("\nConfiguration as loaded from the config file and any command line arguments:\n\n")
+	fmt.Println(string(b))
+	os.Exit(0)
 }

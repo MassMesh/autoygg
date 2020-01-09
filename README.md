@@ -47,7 +47,21 @@ $ GOARCH=arm64 make
 
 Example session:
 
-1) On the machine that will run *autoygg-server*, create a config file at /etc/autoygg/server.yaml, e.g. with these contents:
+1) Go to the machine that will run *autoygg-server*.
+
+The *autoygg-server* program will accept parameters in a configuration file named *server.yaml*, which can be located in */etc/autoygg/* or in the directory the *autoygg-server* binary is executed from. A few parameters may be specified as command line arguments. The complete list of parameters can be consulted by running *autoygg-server --help*, e.g.:
+
+```
+$ ./autoygg-server --help
+
+autoygg-server provides internet egress for Yggdrasil nodes running autoygg-client.
+
+Options:
+      --dumpConfig   dump the configuration that would be used by autoygg-server and exit
+      --help         print usage and exit
+```
+
+Create a config file at /etc/autoygg/server.yaml. A sample configuration file is provided in cmd/autoygg-server/server.yaml. A minimal configuration could be:
 
 ```
 ---
@@ -64,7 +78,7 @@ Get the value for 'ListenHost' by running
 yggdrasilctl getSelf
 ```
 
-*WARNING*: in this configuration, this autoygg server will provide internet egress to any client that registers itself. To limit which clients can use the server, change WhitelistEnabled to *true* in server.yaml and create a file named /etc/autoygg/whitelist.yaml. Add your client whitelist to that file, e.g. like this:
+*WARNING*: in this configuration, this autoygg server will provide internet egress to any client that registers itself. To limit which clients can use the server, change WhitelistEnabled to *true* in server.yaml and create a file named */etc/autoygg/whitelist.yaml*. Add your client yggdrasil IP to that file, e.g. like this:
 
 ```
 ---
@@ -82,7 +96,26 @@ Note: the `autoygg-server` program will automatically refresh all its config fil
 
 3) Now switch to machine that will run *autoygg-client*. Because the client will reconfigure your local networking, it needs sufficient privileges to do so, e.g. by using sudo to invoke it.
 
-Supply the yggdrasil IP of the node that runs autoygg-server as *--gateway-host*. You do not need to be peered directly with that node. The *--wan-gw-dev* and *--wan-gw-ip* values are your current local default gateway information. It is needed by the *autoygg-client* tool because a host route to your local gateway IP needs to be installed for each of your Yggdrasil peers! The default values for the default gateway device and address are respectively eth0 and 192.168.1.1, and they may be omitted if your values match those defaults.
+The *autoygg-client* program will accept parameters in a configuration file named *client.yaml*, which can be located in */etc/autoygg/* or in the directory the *autoygg-client* binary is executed from. Parameters may also be specified as command line arguments. The complete list of parameters can be consulted by running *autoygg-client --help*, e.g.:
+
+```
+$ ./autoygg-client --help
+
+autoygg-client is a tool to register an Yggdrasil node with a gateway for internet egress.
+
+Options:
+      --action string              action (register/renew/release) (default "register")
+      --debug                      debug output
+      --defaultGatewayDev string   LAN default gateway device (default "eth0")
+      --defaultGatewayIP string    LAN default gateway IP address (e.g. 192.168.1.1)
+      --dumpConfig                 dump the configuration that would be used by autoygg-client and exit
+      --gatewayHost string         Yggdrasil IP address of the gateway host
+      --gatewayPort string         port of the gateway daemon (default "8080")
+      --help                       print usage and exit
+      --quiet                      suppress non-error output
+```
+
+Supply the yggdrasil IP of the node that runs autoygg-server as *--gatewayHost*. You do not need to be peered directly with that node. The *--defaultGatewayDev* and *--defaultGatewayIP* values are your current local default gateway information. It is needed by the *autoygg-client* tool because a host route to your local gateway IP needs to be installed for each of your Yggdrasil peers! The default values for the default gateway device and address are respectively eth0 and 192.168.1.1, and they may be omitted if your values match those defaults.
 
 ```
 $ sudo ./autoygg-client --gateway-host the:yggdrasil:ip:where:autoygg-server:runs --wan-gw-dev eth0 --wan-gw-ip 192.168.10.1 --action register

@@ -7,7 +7,6 @@ import (
 	flag "github.com/spf13/pflag"
 	//"github.com/brotherpowers/ipsubnet"
 	"github.com/spf13/viper"
-	"gopkg.in/yaml.v2"
 	"io/ioutil"
 	"log"
 	"net/http"
@@ -171,18 +170,6 @@ func clientLoadConfig(path string) {
 	}
 }
 
-func dumpConfiguration() {
-	configMap := viper.AllSettings()
-	delete(configMap, "help") // do not include the "help" flag in the config dump
-	b, err := yaml.Marshal(configMap)
-	if err != nil {
-		Fatal(err)
-	}
-	fmt.Println("\nConfiguration as loaded from the config file and any command line arguments:\n")
-	fmt.Println(string(b))
-	os.Exit(0)
-}
-
 // ClientMain is the main() function for the client program
 func ClientMain() {
 	setupLogWriter()
@@ -207,7 +194,10 @@ func ClientMain() {
 		Fatal(err)
 	}
 
-	viper.BindPFlags(fs)
+	err = viper.BindPFlags(fs)
+	if err != nil {
+		Fatal(err)
+	}
 
 	if viper.GetBool("Help") {
 		clientUsage(fs)
