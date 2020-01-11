@@ -72,18 +72,18 @@ func removeTunnelIP(IPAddress string, NetMask int) (err error) {
 }
 
 func tunnelIPWorker(action string, IPAddress string, NetMask int) (err error) {
-	out, err := exec.Command("ip", "addr", "list", "tun0").Output()
+	out, err := exec.Command("ip", "addr", "list", viper.GetString("YggdrasilInterface")).Output()
 	if err != nil {
-		err = fmt.Errorf("Unable to run `ip addr list tun0`: %s", err)
+		err = fmt.Errorf("Unable to run `ip addr list %s`: %s", viper.GetString("YggdrasilInterface"), err)
 		return
 	}
 
 	found := strings.Index(string(out), IPAddress+"/"+strconv.Itoa(NetMask))
 
 	if (action == "add" && found == -1) || (action == "del" && found != -1) {
-		_, err = exec.Command("ip", "addr", action, IPAddress+"/"+strconv.Itoa(NetMask), "dev", "tun0").Output()
+		_, err = exec.Command("ip", "addr", action, IPAddress+"/"+strconv.Itoa(NetMask), "dev", viper.GetString("YggdrasilInterface")).Output()
 		if err != nil {
-			err = fmt.Errorf("Unable to run `ip addr %s %s/%d dev tun0`: %s", action, IPAddress, NetMask, err)
+			err = fmt.Errorf("Unable to run `ip addr %s %s/%d dev %s`: %s", action, IPAddress, NetMask, viper.GetString("YggdrasilInterface"), err)
 			return
 		}
 	}

@@ -182,6 +182,7 @@ func ClientMain() {
 	fs.String("gatewayPort", "8080", "port of the gateway daemon")
 	fs.String("defaultGatewayIP", "", "LAN default gateway IP address (e.g. 192.168.1.1)")
 	fs.String("defaultGatewayDev", "eth0", "LAN default gateway device")
+	fs.String("yggdrasilInterface", "tun0", "Yggdrasil tunnel interface")
 	fs.String("action", "register", "action (register/renew/release)")
 	// fixme remove the global debug bar, we use viper everywhere now
 	fs.BoolVar(&debug, "debug", false, "debug output")

@@ -440,6 +440,7 @@ func serverLoadConfigDefaults() {
 	viper.SetDefault("WhitelistFile", "whitelist") // Name of the file that contains whitelisted clients, one per line. Omit .yaml extension.
 	viper.SetDefault("BlacklistEnabled", true)
 	viper.SetDefault("BlacklistFile", "blacklist") // Name of the file that contains blacklisted clients, one per line. Omit .yaml extension.
+	viper.SetDefault("YggdrasilInterface", "tun0") // Name of the yggdrasil tunnel interface
 	viper.SetDefault("Debug", false)
 	gatewayPublicKey, err := getSelfPublicKey()
 	if err != nil {
@@ -594,7 +595,7 @@ func ServerMain() {
 		Fatal(err)
 	}
 
-  err = viper.BindPFlags(fs)
+	err = viper.BindPFlags(fs)
 	if err != nil {
 		Fatal(err)
 	}

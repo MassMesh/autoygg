@@ -7,7 +7,10 @@ client:
 server:
 	cd cmd/autoygg-server && $(MAKE)
 
-dev: client-dev server-dev
+dev: gofmt client-dev server-dev
+
+gofmt:
+	gofmt -s -w .
 
 client-dev:
 	cd cmd/autoygg-client && $(MAKE) dev
