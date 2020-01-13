@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	flag "github.com/spf13/pflag"
-	//"github.com/brotherpowers/ipsubnet"
 	"github.com/spf13/viper"
 	"io/ioutil"
 	"log"
