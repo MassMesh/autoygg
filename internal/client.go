@@ -1,15 +1,21 @@
 package internal
 
 import (
+	"bufio"
 	"bytes"
+	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	flag "github.com/spf13/pflag"
 	"github.com/spf13/viper"
 	"io/ioutil"
 	"log"
+	"net"
 	"net/http"
 	"os"
+	"strconv"
+	"strings"
 )
 
 func clientUsage(fs *flag.FlagSet) {
@@ -108,7 +114,7 @@ func clientSetupRoutes(clientIP string, clientNetMask int, clientGateway string,
 	return
 }
 
-func clientTearDownRoutes(clientIP string, clientNetMask int, clientGateway string, publicKey string, defaultGatewayIP string, defaultGatewayDevice string) (err error) {
+func clientTearDownRoutes(clientIP string, clientNetMask int, clientGateway string, publicKey string) (err error) {
 	// FIXME do we want to make this properly configurable?
 	viper.SetDefault("GatewayRemoveRemoteSubnetCommand", "/usr/bin/yggdrasilctl removeremotesubnet subnet=%%SUBNET%% box_pub_key=%%CLIENT_PUBLIC_KEY%%")
 
@@ -121,8 +127,8 @@ func clientTearDownRoutes(clientIP string, clientNetMask int, clientGateway stri
 	handleError(err, false)
 
 	for _, p := range peers {
-		log.Printf("Removing Yggdrasil peer route for %s via %s", p, defaultGatewayIP)
-		err = removePeerRoute(p, defaultGatewayIP, defaultGatewayDevice)
+		log.Printf("Removing Yggdrasil peer route for %s", p)
+		err = removePeerRoute(p)
 		handleError(err, false)
 	}
 
@@ -179,8 +185,8 @@ func ClientMain() {
 
 	fs.String("gatewayHost", "", "Yggdrasil IP address of the gateway host")
 	fs.String("gatewayPort", "8080", "port of the gateway daemon")
-	fs.String("defaultGatewayIP", "", "LAN default gateway IP address (e.g. 192.168.1.1)")
-	fs.String("defaultGatewayDev", "eth0", "LAN default gateway device")
+	fs.String("defaultGatewayIP", "", "LAN default gateway IP address (autodiscovered by default)")
+	fs.String("defaultGatewayDev", "", "LAN default gateway device (autodiscovered by default)")
 	fs.String("yggdrasilInterface", "tun0", "Yggdrasil tunnel interface")
 	fs.String("action", "register", "action (register/renew/release)")
 	// fixme remove the global debug bar, we use viper everywhere now
@@ -227,11 +233,24 @@ func ClientMain() {
 			Fatal(err)
 		}
 	}
+
+	// FIXME when releasing, we need to use the stored config
+	gatewayDev := viper.GetString("DefaultGatewayDev")
+	gatewayIP := viper.GetString("DefaultGatewayIP")
+	if gatewayIP == "" {
+		tmpDev, tmpIP, err := DiscoverGateway()
+		if err != nil {
+			Fatal(err)
+		}
+		gatewayIP = tmpIP.String()
+		gatewayDev = tmpDev
+	}
+
 	if r.Error == "" {
 		if viper.GetString("Action") == "release" {
-			err = clientTearDownRoutes(r.ClientIP, r.ClientNetMask, r.ClientGateway, r.GatewayPublicKey, viper.GetString("DefaultGatewayIP"), viper.GetString("DefaultGatewayDev"))
+			err = clientTearDownRoutes(r.ClientIP, r.ClientNetMask, r.ClientGateway, r.GatewayPublicKey)
 		} else {
-			err = clientSetupRoutes(r.ClientIP, r.ClientNetMask, r.ClientGateway, r.GatewayPublicKey, viper.GetString("DefaultGatewayIP"), viper.GetString("DefaultGatewayDev"))
+			err = clientSetupRoutes(r.ClientIP, r.ClientNetMask, r.ClientGateway, r.GatewayPublicKey, gatewayIP, gatewayDev)
 		}
 		if err != nil {
 			Fatal(err)
@@ -239,4 +258,63 @@ func ClientMain() {
 	} else {
 		Fatal(r.Error)
 	}
+}
+
+// DiscoverGateway returns the device and IP of the default network gateway
+// borrowed from https://github.com/jackpal/gateway (3-clause BSD)
+// changed to return the gateway device as well
+func DiscoverGateway() (dev string, ip net.IP, err error) {
+	const file = "/proc/net/route"
+	f, err := os.Open(file)
+	if err != nil {
+		return "", nil, fmt.Errorf("Can't access %s", file)
+	}
+	defer f.Close()
+
+	bytes, err := ioutil.ReadAll(f)
+	if err != nil {
+		return "", nil, fmt.Errorf("Can't read %s", file)
+	}
+	return parseLinuxProcNetRoute(bytes)
+}
+
+// borrowed from https://github.com/jackpal/gateway (3-clause BSD)
+// changed to return the gateway device as well
+func parseLinuxProcNetRoute(f []byte) (string, net.IP, error) {
+	/* /proc/net/route file:
+	   Iface   Destination Gateway     Flags   RefCnt  Use Metric  Mask
+	   eno1    00000000    C900A8C0    0003    0   0   100 00000000    0   00
+	   eno1    0000A8C0    00000000    0001    0   0   100 00FFFFFF    0   00
+	*/
+	const (
+		sep      = "\t" // field separator
+		devfield = 0    // field containing gateway internet device name
+		field    = 2    // field containing hex gateway address
+	)
+	scanner := bufio.NewScanner(bytes.NewReader(f))
+	if scanner.Scan() {
+		// Skip header line
+		if !scanner.Scan() {
+			return "", nil, errors.New("Invalid linux route file")
+		}
+
+		// get field containing gateway address
+		tokens := strings.Split(scanner.Text(), sep)
+		if len(tokens) <= field {
+			return "", nil, errors.New("Invalid linux route file")
+		}
+		gatewayHex := "0x" + tokens[field]
+
+		// cast hex address to uint32
+		d, _ := strconv.ParseInt(gatewayHex, 0, 64)
+		d32 := uint32(d)
+
+		// make net.IP address from uint32
+		ipd32 := make(net.IP, 4)
+		binary.LittleEndian.PutUint32(ipd32, d32)
+
+		// format net.IP to dotted ipV4 string
+		return tokens[devfield], net.IP(ipd32), nil
+	}
+	return "", nil, errors.New("Failed to parse linux route file")
 }

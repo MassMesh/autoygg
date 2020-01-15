@@ -133,13 +133,16 @@ func addPeerRoute(peer string, defaultGatewayIP string, defaultGatewayDevice str
 }
 
 // removePeerRoute removes a route for an yggdrasil peer. It runs the command
-//   ip ro del <peer_ip> via <wan_gw> dev <wan_dev>
-func removePeerRoute(peer string, defaultGatewayIP string, defaultGatewayDevice string) (err error) {
-	return peerRouteWorker("del", peer, defaultGatewayIP, defaultGatewayDevice)
+//   ip ro del <peer_ip>
+func removePeerRoute(peer string) (err error) {
+	return peerRouteWorker("del", peer, "", "")
 }
 
 func peerRouteWorker(action string, peer string, defaultGatewayIP string, defaultGatewayDevice string) (err error) {
 	cmdArgs := []string{"ro", "list", peer, "via", defaultGatewayIP, "dev", defaultGatewayDevice}
+	if action == "del" {
+		cmdArgs = []string{"ro", "list", peer}
+	}
 	out, err := exec.Command("ip", cmdArgs...).Output()
 	if err != nil {
 		err = fmt.Errorf("Unable to run `ip %s`: %s", strings.Join(cmdArgs, " "), err)
@@ -150,7 +153,11 @@ func peerRouteWorker(action string, peer string, defaultGatewayIP string, defaul
 		return
 	}
 
-	cmdArgs = []string{"ro", action, peer, "via", defaultGatewayIP, "dev", defaultGatewayDevice}
+	if action == "del" {
+		cmdArgs = []string{"ro", action, peer}
+	} else {
+		cmdArgs = []string{"ro", action, peer, "via", defaultGatewayIP, "dev", defaultGatewayDevice}
+	}
 	_, err = exec.Command("ip", cmdArgs...).Output()
 	if err != nil {
 		err = fmt.Errorf("Unable to run `ip %s`: %s", strings.Join(cmdArgs, " "), err)
