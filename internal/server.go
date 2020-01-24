@@ -434,8 +434,6 @@ func serverLoadConfigDefaults() {
 	viper.SetDefault("GatewayTunnelNetMask", 16)
 	viper.SetDefault("GatewayTunnelIPRangeMin", "10.42.42.1")   // Minimum IP for "DHCP" range
 	viper.SetDefault("GatewayTunnelIPRangeMax", "10.42.42.255") // Maximum IP for "DHCP" range
-	viper.SetDefault("GatewayAddRemoteSubnetCommand", "/usr/bin/yggdrasilctl addremotesubnet subnet=%%SUBNET%% box_pub_key=%%CLIENT_PUBLIC_KEY%%")
-	viper.SetDefault("GatewayRemoveRemoteSubnetCommand", "/usr/bin/yggdrasilctl removeremotesubnet subnet=%%SUBNET%% box_pub_key=%%CLIENT_PUBLIC_KEY%%")
 	viper.SetDefault("WhitelistEnabled", true)
 	viper.SetDefault("WhitelistFile", "whitelist") // Name of the file that contains whitelisted clients, one per line. Omit .yaml extension.
 	viper.SetDefault("BlacklistEnabled", true)
@@ -453,6 +451,7 @@ func serverLoadConfigDefaults() {
 }
 
 func serverLoadConfig(path string) {
+	viperLoadSharedDefaults()
 	serverLoadConfigDefaults()
 
 	viper.SetEnvPrefix("AUTOYGG") // will be uppercased automatically

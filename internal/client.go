@@ -80,9 +80,6 @@ func clientSetupRoutes(clientIP string, clientNetMask int, clientGateway string,
 	err = addTunnelIP(clientIP, clientNetMask)
 	handleError(err, false)
 
-	// FIXME do we want to make this properly configurable?
-	viper.SetDefault("GatewayAddRemoteSubnetCommand", "/usr/bin/yggdrasilctl addremotesubnet subnet=%%SUBNET%% box_pub_key=%%CLIENT_PUBLIC_KEY%%")
-
 	log.Printf("Adding Yggdrasil remote subnet 0.0.0.0/0")
 	err = addRemoteSubnet("0.0.0.0/0", publicKey)
 	handleError(err, false)
@@ -115,9 +112,6 @@ func clientSetupRoutes(clientIP string, clientNetMask int, clientGateway string,
 }
 
 func clientTearDownRoutes(clientIP string, clientNetMask int, clientGateway string, publicKey string) (err error) {
-	// FIXME do we want to make this properly configurable?
-	viper.SetDefault("GatewayRemoveRemoteSubnetCommand", "/usr/bin/yggdrasilctl removeremotesubnet subnet=%%SUBNET%% box_pub_key=%%CLIENT_PUBLIC_KEY%%")
-
 	log.Printf("Removing default gateway pointing at %s", clientGateway)
 	err = removeDefaultGateway(clientGateway)
 	handleError(err, false)
@@ -199,6 +193,8 @@ func ClientMain() {
 	if err != nil {
 		Fatal(err)
 	}
+
+	viperLoadSharedDefaults()
 
 	err = viper.BindPFlags(fs)
 	if err != nil {
