@@ -230,12 +230,15 @@ func yggdrasilPeers() (peers []string, err error) {
 			// Skip ourselves
 			continue
 		}
-
-		re := regexp.MustCompile(` .*?://(.*?):.* `)
-		match := re.FindStringSubmatch(l)
+		re := regexp.MustCompile(` .*?://(.*):\d+? `)
+		match := re.FindStringSubmatch(strings.TrimSpace(l))
 		if len(match) < 1 {
 			err = fmt.Errorf("Unable to parse yggdrasilctl output: %s", l)
 			return
+		}
+		if strings.IndexByte(match[1], '%') != -1 {
+			// Local IPv6 address like [fe80::42:acff:fe11:2%docker0]
+			continue
 		}
 		peers = append(peers, match[1])
 	}
