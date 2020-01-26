@@ -203,7 +203,7 @@ func ClientMain() {
 
 	if viper.GetBool("Help") {
 		clientUsage(fs)
-		os.Exit(1)
+		os.Exit(0)
 	}
 
 	if viper.GetBool("DumpConfig") {
@@ -212,7 +212,7 @@ func ClientMain() {
 
 	if viper.GetString("GatewayHost") == "" || viper.GetString("Action") == "" {
 		clientUsage(fs)
-		os.Exit(1)
+		os.Exit(0)
 	}
 
 	response := doPostRequest(fs, viper.GetString("Action"), viper.GetString("GatewayHost"), viper.GetString("GatewayPort"))
