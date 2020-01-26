@@ -236,8 +236,10 @@ func yggdrasilPeers() (peers []string, err error) {
 			err = fmt.Errorf("Unable to parse yggdrasilctl output: %s", l)
 			return
 		}
-		if strings.IndexByte(match[1], '%') != -1 {
+		if strings.Contains(match[1], ":") {
 			// Local IPv6 address like [fe80::42:acff:fe11:2%docker0]
+			// Or any other IPv6 address. Using ip.To4() == nil is not good enough,
+			// cf. https://github.com/miekg/dns/pull/923
 			continue
 		}
 		peers = append(peers, match[1])
