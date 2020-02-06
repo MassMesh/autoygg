@@ -159,13 +159,11 @@ func clientLoadConfig(path string) {
 	viper.AddConfigPath("$HOME/.autoygg")
 	viper.AddConfigPath(".")
 	err := viper.ReadInConfig()
-	if err != nil {
-		if _, ok := err.(viper.ConfigFileNotFoundError); ok {
-			// The client config file is optional
-			err = nil
-		} else {
-			Fatal(fmt.Sprintln("Fatal error reading config file:", err.Error()))
-		}
+	if _, ok := err.(viper.ConfigFileNotFoundError); ok {
+		// The client config file is optional
+		err = nil
+	} else if err != nil {
+		Fatal(fmt.Sprintln("Fatal error reading config file:", err.Error()))
 	}
 }
 
