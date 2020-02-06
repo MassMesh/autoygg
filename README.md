@@ -104,43 +104,79 @@ $ ./autoygg-client --help
 autoygg-client is a tool to register an Yggdrasil node with a gateway for internet egress.
 
 Options:
-      --action string              action (register/renew/release) (default "register")
-      --debug                      debug output
-      --defaultGatewayDev string   LAN default gateway device (default "eth0")
-      --defaultGatewayIP string    LAN default gateway IP address (e.g. 192.168.1.1)
-      --dumpConfig                 dump the configuration that would be used by autoygg-client and exit
-      --gatewayHost string         Yggdrasil IP address of the gateway host
-      --gatewayPort string         port of the gateway daemon (default "8080")
-      --help                       print usage and exit
-      --quiet                      suppress non-error output
+      --action string               action (register/renew/release) (default "register")
+      --daemon                      Run in daemon mode. The client will automatically renew its lease before it expires. (default true)
+      --debug                       debug output
+      --defaultGatewayDev string    LAN default gateway device (autodiscovered by default)
+      --defaultGatewayIP string     LAN default gateway IP address (autodiscovered by default)
+      --dumpConfig                  dump the configuration that would be used by autoygg-client and exit
+      --gatewayHost string          Yggdrasil IP address of the gateway host
+      --gatewayPort string          port of the gateway daemon (default "8080")
+      --help                        print usage and exit
+      --quiet                       suppress non-error output
+      --yggdrasilInterface string   Yggdrasil tunnel interface (default "tun0")
 ```
 
-Supply the yggdrasil IP of the node that runs autoygg-server as *--gatewayHost*. You do not need to be peered directly with that node. The *--defaultGatewayDev* and *--defaultGatewayIP* values are your current local default gateway information. It is needed by the *autoygg-client* tool because a host route to your local gateway IP needs to be installed for each of your Yggdrasil peers! The default values for the default gateway device and address are respectively eth0 and 192.168.1.1, and they may be omitted if your values match those defaults.
+Supply the yggdrasil IP of the node that runs autoygg-server as *--gatewayHost*, or populate the configuration file accordingly. You do not need to be peered directly with that node.
+
+By default, the `autoygg-client` program will run in daemon mode in the foreground. It will register a new lease and renew it on a regular basis, until it is shut down. For example:
 
 ```
-$ sudo ./autoygg-client --gateway-host the:yggdrasil:ip:where:autoygg-server:runs --wan-gw-dev eth0 --wan-gw-ip 192.168.10.1 --action register
+$ sudo ./autoygg-client
+Sending `register` request to autoygg                                 [ ok ]
 Enabling Yggdrasil tunnel routing                                     [ ok ]
 Adding Yggdrasil local subnet 0.0.0.0/0                               [ ok ]
 Adding tunnel IP 10.42.42.1/16                                        [ ok ]
 Adding Yggdrasil remote subnet 0.0.0.0/0                              [ ok ]
 Getting Yggdrasil peers                                               [ ok ]
-Adding Yggdrasil peer route for X.X.X.X via 192.168.10.1              [ ok ]
+Adding Yggdrasil peer route for X.X.X.X via 192.168.1.1               [ ok ]
 Adding default gateway pointing at 10.42.0.1                          [ ok ]
-```
-
-Tearing the session back down again will return your network configuration to its previous state:
+Set up cron job to renew lease every 30 minutes                       [ ok ]
 
 ```
-sudo ./autoygg-client --gateway-host the:yggdrasil:ip:where:autoygg-server:runs --wan-gw-dev eth0 --wan-gw-ip 192.168.10.1 --action release
+
+When aborted (e.g. with Ctrl-C), the `autoygg-client` program will clean up after itself:
+
+```
+Sending `release` request to autoygg                                  [ ok ]
 Removing default gateway pointing at 10.42.0.1                        [ ok ]
 Getting Yggdrasil peers                                               [ ok ]
-Removing Yggdrasil peer route for X.X.X.X via 192.168.13.1            [ ok ]
+Removing Yggdrasil peer route for X.X.X.X                             [ ok ]
 Removing Yggdrasil remote subnet 0.0.0.0/0                            [ ok ]
 Removing tunnel IP 10.42.42.1/16                                      [ ok ]
 Removing Yggdrasil local subnet 0.0.0.0/0                             [ ok ]
 Disabling Yggdrasil tunnel routing                                    [ ok ]
 ```
 
+It is also possible to run `autoygg-client` in one-off mode. Simply specify the `--daemon=0` argument when registering the lease:
+
+```
+$ sudo ./autoygg-client --action register --daemon=0
+Sending `register` request to autoygg                                 [ ok ]
+Enabling Yggdrasil tunnel routing                                     [ ok ]
+Adding Yggdrasil local subnet 0.0.0.0/0                               [ ok ]
+Adding tunnel IP 10.42.42.1/16                                        [ ok ]
+Adding Yggdrasil remote subnet 0.0.0.0/0                              [ ok ]
+Getting Yggdrasil peers                                               [ ok ]
+Adding Yggdrasil peer route for X.X.X.X via 192.168.1.1               [ ok ]
+Adding default gateway pointing at 10.42.0.1                          [ ok ]
+$
+```
+
+When releasing a lease, it is not necessary to provide the `--daemon=0` argument. This will return your network configuration to its previous state:
+
+```
+$ sudo ./autoygg-client --action release
+Sending `release` request to autoygg                                  [ ok ]
+Removing default gateway pointing at 10.42.0.1                        [ ok ]
+Getting Yggdrasil peers                                               [ ok ]
+Removing Yggdrasil peer route for X.X.X.X                             [ ok ]
+Removing Yggdrasil remote subnet 0.0.0.0/0                            [ ok ]
+Removing tunnel IP 10.42.42.1/16                                      [ ok ]
+Removing Yggdrasil local subnet 0.0.0.0/0                             [ ok ]
+Disabling Yggdrasil tunnel routing                                    [ ok ]
+$
+```
 ## Hacking
 
 GNU Make and a Go compiler, version 1.11 or higher are required. In addition,

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/robfig/cron/v3"
 	flag "github.com/spf13/pflag"
 	"github.com/spf13/viper"
 	"io/ioutil"
@@ -14,8 +15,10 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/signal"
 	"strconv"
 	"strings"
+	"syscall"
 )
 
 func clientUsage(fs *flag.FlagSet) {
@@ -167,6 +170,29 @@ func clientLoadConfig(path string) {
 	}
 }
 
+func renewLease(fs *flag.FlagSet) {
+	doRequest(fs, "renew", viper.GetString("GatewayHost"), viper.GetString("GatewayPort"))
+}
+
+func doRequest(fs *flag.FlagSet, action string, gatewayHost string, gatewayPort string) (r registration) {
+	log.Printf("Sending `" + action + "` request to autoygg")
+	response := doPostRequest(fs, action, gatewayHost, gatewayPort)
+	if debug {
+		fmt.Printf("Raw server response:\n\n%s\n\n", string(response))
+	}
+	err := json.Unmarshal(response, &r)
+	handleError(err, false)
+	if err != nil {
+		if viper.GetString("Action") == "release" {
+			// Do not abort when we are trying to release a lease
+			fmt.Println(err)
+		} else {
+			Fatal(err)
+		}
+	}
+	return
+}
+
 // ClientMain is the main() function for the client program
 func ClientMain() {
 	setupLogWriter()
@@ -175,6 +201,7 @@ func ClientMain() {
 	fs := flag.NewFlagSet("Autoygg", flag.ContinueOnError)
 	fs.Usage = func() { clientUsage(fs) }
 
+	fs.Bool("daemon", true, "Run in daemon mode. The client will automatically renew its lease before it expires.")
 	fs.String("gatewayHost", "", "Yggdrasil IP address of the gateway host")
 	fs.String("gatewayPort", "8080", "port of the gateway daemon")
 	fs.String("defaultGatewayIP", "", "LAN default gateway IP address (autodiscovered by default)")
@@ -213,44 +240,45 @@ func ClientMain() {
 		os.Exit(0)
 	}
 
-	response := doPostRequest(fs, viper.GetString("Action"), viper.GetString("GatewayHost"), viper.GetString("GatewayPort"))
-	if debug {
-		fmt.Printf("Raw server response:\n\n%s\n\n", string(response))
-	}
-	var r registration
-	err = json.Unmarshal(response, &r)
-	if err != nil {
-		if viper.GetString("Action") == "release" {
-			// Do not abort when we are trying to release a lease, continue with the clientTearDownRoutes below
-			fmt.Println(err)
-		} else {
-			Fatal(err)
-		}
-	}
-
-	// FIXME when releasing, we need to use the stored config
-	gatewayDev := viper.GetString("DefaultGatewayDev")
-	gatewayIP := viper.GetString("DefaultGatewayIP")
-	if gatewayIP == "" {
-		tmpDev, tmpIP, err := DiscoverGateway()
-		if err != nil {
-			Fatal(err)
-		}
-		gatewayIP = tmpIP.String()
-		gatewayDev = tmpDev
-	}
-
-	if r.Error == "" {
-		if viper.GetString("Action") == "release" {
-			err = clientTearDownRoutes(r.ClientIP, r.ClientNetMask, r.ClientGateway, r.GatewayPublicKey)
-		} else {
-			err = clientSetupRoutes(r.ClientIP, r.ClientNetMask, r.ClientGateway, r.GatewayPublicKey, gatewayIP, gatewayDev)
-		}
-		if err != nil {
-			Fatal(err)
-		}
-	} else {
+	r := doRequest(fs, viper.GetString("Action"), viper.GetString("GatewayHost"), viper.GetString("GatewayPort"))
+	if r.Error != "" {
 		Fatal(r.Error)
+	}
+
+	if viper.GetString("Action") == "release" {
+		err = clientTearDownRoutes(r.ClientIP, r.ClientNetMask, r.ClientGateway, r.GatewayPublicKey)
+	} else {
+		gatewayDev := viper.GetString("DefaultGatewayDev")
+		gatewayIP := viper.GetString("DefaultGatewayIP")
+		if gatewayIP == "" {
+			tmpDev, tmpIP, err := DiscoverGateway()
+			if err != nil {
+				Fatal(err)
+			}
+			gatewayIP = tmpIP.String()
+			gatewayDev = tmpDev
+		}
+		err = clientSetupRoutes(r.ClientIP, r.ClientNetMask, r.ClientGateway, r.GatewayPublicKey, gatewayIP, gatewayDev)
+	}
+	if err != nil {
+		Fatal(err)
+	}
+
+	if viper.GetBool("Daemon") && viper.GetString("Action") == "register" {
+		log.Printf("Set up cron job to renew lease every 30 minutes")
+		c := cron.New()
+		_, err := c.AddFunc("CRON_TZ=UTC */30 * * * *", func() { renewLease(fs) })
+		handleError(err, false)
+		if err != nil {
+			Fatal("Couldn't set up cron job!")
+		}
+		go c.Start()
+		sig := make(chan os.Signal, 1)
+		signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
+		<-sig
+		fmt.Print("\r") // Overwrite any ^C that may have been printed on the screen
+		doRequest(fs, "release", viper.GetString("GatewayHost"), viper.GetString("GatewayPort"))
+		_ = clientTearDownRoutes(r.ClientIP, r.ClientNetMask, r.ClientGateway, r.GatewayPublicKey)
 	}
 }
 
