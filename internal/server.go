@@ -608,6 +608,19 @@ func ServerMain() {
 		dumpConfiguration()
 	}
 
+	if viper.GetString("StateDir") == "" {
+		fmt.Println("Error: StateDir must not be empty. Please check the configuration file.")
+		serverUsage(fs)
+		os.Exit(1)
+	}
+
+	if _, err := os.Stat(viper.GetString("StateDir")); os.IsNotExist(err) {
+		err = os.MkdirAll(viper.GetString("StateDir"), os.FileMode(0700))
+		if err != nil {
+			Fatal(err)
+		}
+	}
+
 	db := setupDB("sqlite3", viper.GetString("StateDir")+"/autoygg.db")
 	defer db.Close()
 	r := setupRouter(db)
@@ -624,5 +637,9 @@ func ServerMain() {
 	err = addTunnelIP(viper.GetString("GatewayTunnelIP"), viper.GetInt("GatewayTunnelNetmask"))
 	handleError(err, true)
 	// FIXME todo defer tearing down the config we added?
-	r.Run("[" + viper.GetString("ListenHost") + "]:" + viper.GetString("ListenPort"))
+	err = r.Run("[" + viper.GetString("ListenHost") + "]:" + viper.GetString("ListenPort"))
+	if err != nil {
+		log.Print("Starting autoygg server daemon")
+		handleError(err, true)
+	}
 }

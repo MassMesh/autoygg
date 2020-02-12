@@ -359,11 +359,11 @@ func handleError(err error, terminateOnFail bool) {
 	if err != nil {
 		if !viper.GetBool("Quiet") {
 			fmt.Printf("[ FAIL ]\n")
-			if terminateOnFail {
-				os.Exit(1)
-			}
 		}
-		fmt.Printf("-> %s\n", err)
+		fmt.Printf("Error: %s\n", err)
+		if terminateOnFail {
+			os.Exit(1)
+		}
 	} else {
 		if !viper.GetBool("Quiet") {
 			fmt.Printf("[ ok ]\n")
