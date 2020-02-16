@@ -141,9 +141,11 @@ func newIPAddress(db *gorm.DB) (IPAddress string) {
 
 	count := 1
 	IP := net.ParseIP(ipMin)
-	for count == 0 && IP.String() != ipMax {
-		IP = nextIP(IP, 1)
-		db.Model(&registration{}).Where("client_ip = ?", IP).Count(&count)
+	for count != 0 && IP.String() != ipMax {
+		db.Model(&registration{}).Where("client_ip = ?", IP.String()).Count(&count)
+		if count != 0 {
+			IP = nextIP(IP, 1)
+		}
 	}
 	return IP.String()
 }
