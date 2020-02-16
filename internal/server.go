@@ -15,6 +15,8 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 )
 
@@ -327,7 +329,9 @@ func queueAddRemoteSubnet(db *gorm.DB, ID uint) {
 		return
 	}
 	// FIXME: actually queue this, rather than doing it inline
+	log.Printf("Adding remote subnet for %s", r.ClientIP+"/32")
 	err := addRemoteSubnet(r.ClientIP+"/32", r.PublicKey)
+	handleError(err, false)
 
 	if err != nil {
 		incErrorCount("yggdrasil")
@@ -352,7 +356,10 @@ func serverRemoveRemoteSubnet(db *gorm.DB, ID uint) {
 		return
 	}
 
-	err := remoteSubnetWorker("Remove", r.ClientIP, r.PublicKey)
+	// FIXME: actually queue this, rather than doing it inline
+	log.Printf("Removing remote subnet for %s", r.ClientIP+"/32")
+	err := removeRemoteSubnet(r.ClientIP+"/32", r.PublicKey)
+	handleError(err, false)
 
 	if err != nil {
 		incErrorCount("yggdrasil")
@@ -563,18 +570,41 @@ func ValidYggdrasilAddress(address string) bool {
 	return true
 }
 
-func enableIPForwarding() (err error) {
+func disableIPForwarding() error {
+	return iPForwardingWorker("0")
+}
+
+func enableIPForwarding() error {
+	return iPForwardingWorker("1")
+}
+
+func iPForwardingWorker(payload string) (err error) {
 	f, err := os.OpenFile("/proc/sys/net/ipv4/ip_forward", os.O_RDWR, 0644)
 	if err != nil {
 		return
 	}
 	defer f.Close()
-	_, err = f.WriteString("1")
+	_, err = f.WriteString(payload)
 	if err != nil {
 		fmt.Println(err)
 		return
 	}
 	return
+}
+
+func tearDown() {
+	log.Printf("Disabling IP forwarding")
+	err := disableIPForwarding()
+	handleError(err, true)
+	log.Printf("Disabling Yggdrasil tunnel routing")
+	err = disableTunnelRouting()
+	handleError(err, true)
+	log.Printf("Removing Yggdrasil local subnet 0.0.0.0/0")
+	err = removeLocalSubnet("0.0.0.0/0")
+	handleError(err, true)
+	log.Printf("Removing tunnel IP %s/%d", viper.GetString("GatewayTunnelIP"), viper.GetInt("GatewayTunnelNetmask"))
+	err = removeTunnelIP(viper.GetString("GatewayTunnelIP"), viper.GetInt("GatewayTunnelNetmask"))
+	handleError(err, true)
 }
 
 // ServerMain is the main() function for the server program
@@ -639,9 +669,16 @@ func ServerMain() {
 	err = addTunnelIP(viper.GetString("GatewayTunnelIP"), viper.GetInt("GatewayTunnelNetmask"))
 	handleError(err, true)
 	// FIXME todo defer tearing down the config we added?
-	err = r.Run("[" + viper.GetString("ListenHost") + "]:" + viper.GetString("ListenPort"))
-	if err != nil {
-		log.Print("Starting autoygg server daemon")
-		handleError(err, true)
-	}
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
+	go func() {
+		err = r.Run("[" + viper.GetString("ListenHost") + "]:" + viper.GetString("ListenPort"))
+		if err != nil {
+			log.Print("Starting autoygg server daemon")
+			handleError(err, false)
+		}
+	}()
+	<-sig
+	fmt.Print("\r") // Overwrite any ^C that may have been printed on the screen
+	tearDown()
 }
