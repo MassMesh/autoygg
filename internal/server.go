@@ -20,8 +20,10 @@ import (
 	"time"
 )
 
-var whitelist map[string]bool
-var blacklist map[string]bool
+var (
+	whitelist map[string]bool
+	blacklist map[string]bool
+)
 
 var errorCount = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
@@ -56,18 +58,14 @@ func enablePrometheusEndpoint() (p *ginprometheus.Prometheus) {
 func registrationAllowed(address string) bool {
 	if !viper.GetBool("AllowRegistration") {
 		// Registration is disabled. Reject.
-		if debug {
-			fmt.Printf("Registration is disabled, rejecting request from %s\n", address)
-		}
+		debug("Registration is disabled, rejecting request from %s\n", address)
 		return false
 	}
 
 	if viper.GetBool("BlacklistEnabled") {
 		if _, found := blacklist[address]; found {
 			// The address is on the blacklist. Reject.
-			if debug {
-				fmt.Printf("This address is blacklisted, rejecting request from %s\n", address)
-			}
+			debug("This address is blacklisted, rejecting request from %s\n", address)
 			return false
 		}
 	}
@@ -75,21 +73,15 @@ func registrationAllowed(address string) bool {
 	if viper.GetBool("WhitelistEnabled") {
 		if _, found := whitelist[address]; found {
 			// The address is on the whitelist. Accept.
-			if debug {
-				fmt.Printf("This address is whitelisted, accepted request from %s\n", address)
-			}
+			debug("This address is whitelisted, accepted request from %s\n", address)
 			return true
 		}
 	} else {
 		// The whitelist is disabled and registration is allowed. Accept.
-		if debug {
-			fmt.Printf("Whitelist disabled and registration is allowed, accepted request from %s\n", address)
-		}
+		debug("Whitelist disabled and registration is allowed, accepted request from %s\n", address)
 		return true
 	}
-	if debug {
-		fmt.Printf("Whitelist enabled and registration is allowed, address not on whitelist, rejected request from %s\n", address)
-	}
+	debug("Whitelist enabled and registration is allowed, address not on whitelist, rejected request from %s\n", address)
 	return false
 }
 
@@ -491,10 +483,16 @@ func serverLoadConfig(path string) {
 
 	viper.WatchConfig() // Automatically reload the main config when it changes
 	viper.OnConfigChange(func(e fsnotify.Event) {
-		debug = viper.GetBool("Debug")
+		if viper.GetBool("Debug") {
+			debug = debugLog.Printf
+		} else {
+			debug = func(string, ...interface{}) {}
+		}
 		fmt.Println("Config file changed:", e.Name)
 	})
-	debug = viper.GetBool("Debug")
+	if viper.GetBool("Debug") {
+		debug = debugLog.Printf
+	}
 }
 
 func initializeViperList(name string, path string, list *map[string]bool) {
@@ -590,8 +588,8 @@ func iPForwardingWorker(payload string) (err error) {
 		fmt.Println(err)
 		return
 	}
-	ip_forward := string(b)
-	if ip_forward != payload {
+	ipForward := string(b)
+	if ipForward != payload {
 		_, err = f.Seek(0, 0)
 		if err != nil {
 			fmt.Println(err)
@@ -603,7 +601,7 @@ func iPForwardingWorker(payload string) (err error) {
 			return
 		}
 		if payload == "1" {
-			configChanges = append(configChanges, configChange{Name: "IPForwarding", OldVal: ip_forward, NewVal: payload})
+			configChanges = append(configChanges, configChange{Name: "IPForwarding", OldVal: ipForward, NewVal: payload})
 		}
 	}
 	return
@@ -635,7 +633,7 @@ func setup() {
 func tearDown() {
 	for i := len(configChanges) - 1; i >= 0; i-- {
 		change := configChanges[i]
-		log.Printf("tearing down %+v\n", change)
+		debug("Tearing down %+v\n", change)
 		if change.Name == "TunnelIP" {
 			log.Printf("Removing tunnel IP %s/%d", viper.GetString("GatewayTunnelIP"), viper.GetInt("GatewayTunnelNetmask"))
 			err := removeTunnelIP(viper.GetString("GatewayTunnelIP"), viper.GetInt("GatewayTunnelNetmask"))
@@ -658,7 +656,7 @@ func tearDown() {
 
 // ServerMain is the main() function for the server program
 func ServerMain() {
-	setupLogWriter()
+	setupLogWriters()
 
 	// Enable the Prometheus endpoint
 	enablePrometheus = true

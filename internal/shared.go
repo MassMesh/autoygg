@@ -14,8 +14,13 @@ import (
 	"time"
 )
 
-var debug bool
-var enablePrometheus bool
+var (
+	// Debug output goes nowhere by default
+	debug = func(string, ...interface{}) {}
+	// Set up a *log.Logger for debug output
+	debugLog         = log.New(os.Stderr, "DEBUG: ", log.LstdFlags)
+	enablePrometheus bool
+)
 
 type logWriter struct {
 }
@@ -381,7 +386,7 @@ func handleError(err error, terminateOnFail bool) {
 	}
 }
 
-func setupLogWriter() {
+func setupLogWriters() {
 	// Initialize our own logWriter that right justifies all lines at 70 characters
 	// and removes the trailing newline from log statements. Used for status lines
 	// where we want to write something, then execute a command, and follow with

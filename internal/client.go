@@ -177,9 +177,7 @@ func renewLease(fs *flag.FlagSet) {
 func doRequest(fs *flag.FlagSet, action string, gatewayHost string, gatewayPort string) (r registration) {
 	log.Printf("Sending `" + action + "` request to autoygg")
 	response := doPostRequest(fs, action, gatewayHost, gatewayPort)
-	if debug {
-		fmt.Printf("Raw server response:\n\n%s\n\n", string(response))
-	}
+	debug("Raw server response:\n\n%s\n\n", string(response))
 	err := json.Unmarshal(response, &r)
 	handleError(err, false)
 	if err != nil {
@@ -195,7 +193,7 @@ func doRequest(fs *flag.FlagSet, action string, gatewayHost string, gatewayPort 
 
 // ClientMain is the main() function for the client program
 func ClientMain() {
-	setupLogWriter()
+	setupLogWriters()
 	clientLoadConfig("")
 
 	fs := flag.NewFlagSet("Autoygg", flag.ContinueOnError)
@@ -208,8 +206,7 @@ func ClientMain() {
 	fs.String("defaultGatewayDev", "", "LAN default gateway device (autodiscovered by default)")
 	fs.String("yggdrasilInterface", "tun0", "Yggdrasil tunnel interface")
 	fs.String("action", "register", "action (register/renew/release)")
-	// fixme remove the global debug bar, we use viper everywhere now
-	fs.BoolVar(&debug, "debug", false, "debug output")
+	fs.Bool("debug", false, "debug output")
 	fs.Bool("quiet", false, "suppress non-error output")
 	fs.Bool("dumpConfig", false, "dump the configuration that would be used by autoygg-client and exit")
 	fs.Bool("help", false, "print usage and exit")
@@ -238,6 +235,9 @@ func ClientMain() {
 	if viper.GetString("GatewayHost") == "" || viper.GetString("Action") == "" {
 		clientUsage(fs)
 		os.Exit(0)
+	}
+	if viper.GetBool("Debug") {
+		debug = debugLog.Printf
 	}
 
 	r := doRequest(fs, viper.GetString("Action"), viper.GetString("GatewayHost"), viper.GetString("GatewayPort"))
