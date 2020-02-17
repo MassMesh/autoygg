@@ -584,27 +584,76 @@ func iPForwardingWorker(payload string) (err error) {
 		return
 	}
 	defer f.Close()
-	_, err = f.WriteString(payload)
+	b := make([]byte, 1)
+	_, err = f.Read(b)
 	if err != nil {
 		fmt.Println(err)
 		return
 	}
+	ip_forward := string(b)
+	if ip_forward != payload {
+		_, err = f.Seek(0, 0)
+		if err != nil {
+			fmt.Println(err)
+			return
+		}
+		_, err = f.WriteString(payload)
+		if err != nil {
+			fmt.Println(err)
+			return
+		}
+		if payload == "1" {
+			configChanges = append(configChanges, configChange{Name: "IPForwarding", OldVal: ip_forward, NewVal: payload})
+		}
+	}
 	return
 }
 
+type configChange struct {
+	Name   string
+	OldVal interface{}
+	NewVal interface{}
+}
+
+var configChanges []configChange
+
+func setup() {
+	log.Printf("Enabling IP forwarding")
+	err := enableIPForwarding()
+	handleError(err, true)
+	log.Printf("Enabling Yggdrasil tunnel routing")
+	err = enableTunnelRouting()
+	handleError(err, true)
+	log.Printf("Adding Yggdrasil local subnet 0.0.0.0/0")
+	err = addLocalSubnet("0.0.0.0/0")
+	handleError(err, true)
+	log.Printf("Adding tunnel IP %s/%d", viper.GetString("GatewayTunnelIP"), viper.GetInt("GatewayTunnelNetmask"))
+	err = addTunnelIP(viper.GetString("GatewayTunnelIP"), viper.GetInt("GatewayTunnelNetmask"))
+	handleError(err, true)
+}
+
 func tearDown() {
-	log.Printf("Disabling IP forwarding")
-	err := disableIPForwarding()
-	handleError(err, true)
-	log.Printf("Disabling Yggdrasil tunnel routing")
-	err = disableTunnelRouting()
-	handleError(err, true)
-	log.Printf("Removing Yggdrasil local subnet 0.0.0.0/0")
-	err = removeLocalSubnet("0.0.0.0/0")
-	handleError(err, true)
-	log.Printf("Removing tunnel IP %s/%d", viper.GetString("GatewayTunnelIP"), viper.GetInt("GatewayTunnelNetmask"))
-	err = removeTunnelIP(viper.GetString("GatewayTunnelIP"), viper.GetInt("GatewayTunnelNetmask"))
-	handleError(err, true)
+	for i := len(configChanges) - 1; i >= 0; i-- {
+		change := configChanges[i]
+		log.Printf("tearing down %+v\n", change)
+		if change.Name == "TunnelIP" {
+			log.Printf("Removing tunnel IP %s/%d", viper.GetString("GatewayTunnelIP"), viper.GetInt("GatewayTunnelNetmask"))
+			err := removeTunnelIP(viper.GetString("GatewayTunnelIP"), viper.GetInt("GatewayTunnelNetmask"))
+			handleError(err, true)
+		} else if change.Name == "LocalSubnet" {
+			log.Printf("Removing Yggdrasil local subnet 0.0.0.0/0")
+			err := removeLocalSubnet("0.0.0.0/0")
+			handleError(err, true)
+		} else if change.Name == "TunnelRouting" {
+			log.Printf("Disabling Yggdrasil tunnel routing")
+			err := disableTunnelRouting()
+			handleError(err, true)
+		} else if change.Name == "IPForwarding" {
+			log.Printf("Disabling IP forwarding")
+			err := disableIPForwarding()
+			handleError(err, true)
+		}
+	}
 }
 
 // ServerMain is the main() function for the server program
@@ -656,19 +705,9 @@ func ServerMain() {
 	db := setupDB("sqlite3", viper.GetString("StateDir")+"/autoygg.db")
 	defer db.Close()
 	r := setupRouter(db)
-	log.Printf("Enabling IP forwarding")
-	err = enableIPForwarding()
-	handleError(err, true)
-	log.Printf("Enabling Yggdrasil tunnel routing")
-	err = enableTunnelRouting()
-	handleError(err, true)
-	log.Printf("Adding Yggdrasil local subnet 0.0.0.0/0")
-	err = addLocalSubnet("0.0.0.0/0")
-	handleError(err, true)
-	log.Printf("Adding tunnel IP %s/%d", viper.GetString("GatewayTunnelIP"), viper.GetInt("GatewayTunnelNetmask"))
-	err = addTunnelIP(viper.GetString("GatewayTunnelIP"), viper.GetInt("GatewayTunnelNetmask"))
-	handleError(err, true)
-	// FIXME todo defer tearing down the config we added?
+
+	setup()
+
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
 	go func() {

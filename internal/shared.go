@@ -63,15 +63,15 @@ func Fatal(err interface{}) {
 	log.Fatal("Error: ", err)
 }
 
-func addTunnelIP(IPAddress string, NetMask int) (err error) {
-	return tunnelIPWorker("Add", IPAddress, NetMask)
+func addTunnelIP(address string, netMask int) error {
+	return tunnelIPWorker("Add", address, netMask)
 }
 
-func removeTunnelIP(IPAddress string, NetMask int) (err error) {
-	return tunnelIPWorker("Del", IPAddress, NetMask)
+func removeTunnelIP(address string, netMask int) error {
+	return tunnelIPWorker("Del", address, netMask)
 }
 
-func tunnelIPWorker(action string, IPAddress string, NetMask int) (err error) {
+func tunnelIPWorker(action string, address string, netMask int) (err error) {
 	cmd := viper.GetString("ListTunnelRouteCommand")
 	cmd = strings.Replace(cmd, "%%YggdrasilInterface%%", viper.GetString("YggdrasilInterface"), -1)
 
@@ -81,12 +81,12 @@ func tunnelIPWorker(action string, IPAddress string, NetMask int) (err error) {
 		return
 	}
 
-	found := strings.Index(string(out), IPAddress+"/"+strconv.Itoa(NetMask))
+	found := strings.Index(string(out), address+"/"+strconv.Itoa(netMask))
 
 	if (action == "Add" && found == -1) || (action == "Del" && found != -1) {
 		cmd = viper.GetString(action + "TunnelRouteCommand")
-		cmd = strings.Replace(cmd, "%%IPAddress%%", IPAddress, -1)
-		cmd = strings.Replace(cmd, "%%NetMask%%", strconv.Itoa(NetMask), -1)
+		cmd = strings.Replace(cmd, "%%IPAddress%%", address, -1)
+		cmd = strings.Replace(cmd, "%%NetMask%%", strconv.Itoa(netMask), -1)
 		cmd = strings.Replace(cmd, "%%YggdrasilInterface%%", viper.GetString("YggdrasilInterface"), -1)
 		_, err = exec.Command(viper.GetString("Shell"), viper.GetString("ShellCommandArg"), cmd).Output()
 		if err != nil {
@@ -94,34 +94,38 @@ func tunnelIPWorker(action string, IPAddress string, NetMask int) (err error) {
 			return
 		}
 	}
+	if action == "Add" {
+		configChanges = append(configChanges, configChange{Name: "TunnelIP", OldVal: "", NewVal: address + "/" + string(netMask)})
+	}
+
 	return
 }
 
-func addRemoteSubnet(Subnet string, PublicKey string) (err error) {
-	return remoteSubnetWorker("Add", Subnet, PublicKey)
+func addRemoteSubnet(subnet string, publicKey string) error {
+	return remoteSubnetWorker("Add", subnet, publicKey)
 }
 
-func removeRemoteSubnet(Subnet string, PublicKey string) (err error) {
-	return remoteSubnetWorker("Del", Subnet, PublicKey)
+func removeRemoteSubnet(subnet string, publicKey string) error {
+	return remoteSubnetWorker("Del", subnet, publicKey)
 }
 
-func remoteSubnetWorker(Action string, Subnet string, PublicKey string) (err error) {
+func remoteSubnetWorker(action string, subnet string, publicKey string) (err error) {
 	out, err := executeYggdrasilCtl("getroutes")
 	if err != nil {
 		return
 	}
-	matched, err := regexp.Match(Subnet, out)
+	matched, err := regexp.Match(subnet, out)
 	if err != nil {
 		return
 	}
-	if (matched && Action == "Add") || (!matched && Action == "Del") {
+	if (matched && action == "Add") || (!matched && action == "Del") {
 		// We don't need to do anything
 		return
 	}
 
-	cmd := viper.GetString("Gateway" + Action + "RemoteSubnetCommand")
-	cmd = strings.Replace(cmd, "%%Subnet%%", Subnet, -1)
-	cmd = strings.Replace(cmd, "%%ClientPublicKey%%", PublicKey, -1)
+	cmd := viper.GetString("Gateway" + action + "RemoteSubnetCommand")
+	cmd = strings.Replace(cmd, "%%Subnet%%", subnet, -1)
+	cmd = strings.Replace(cmd, "%%ClientPublicKey%%", publicKey, -1)
 
 	command := exec.Command(viper.GetString("Shell"), viper.GetString("ShellCommandArg"), cmd)
 	err = command.Run()
@@ -134,13 +138,13 @@ func remoteSubnetWorker(Action string, Subnet string, PublicKey string) (err err
 
 // addPeerRoute adds a route for an yggdrasil peer. It runs the command
 //   ip ro add <peer_ip> via <wan_gw> dev <wan_dev>
-func addPeerRoute(peer string, defaultGatewayIP string, defaultGatewayDevice string) (err error) {
+func addPeerRoute(peer string, defaultGatewayIP string, defaultGatewayDevice string) error {
 	return peerRouteWorker("Add", peer, defaultGatewayIP, defaultGatewayDevice)
 }
 
 // removePeerRoute removes a route for an yggdrasil peer. It runs the command
 //   ip ro del <peer_ip>
-func removePeerRoute(peer string) (err error) {
+func removePeerRoute(peer string) error {
 	return peerRouteWorker("Del", peer, "", "")
 }
 
@@ -180,12 +184,12 @@ func peerRouteWorker(action string, peer string, defaultGatewayIP string, defaul
 }
 
 // addDefaultGateway adds a default route.
-func addDefaultGateway(clientGateway string) (err error) {
+func addDefaultGateway(clientGateway string) error {
 	return defaultGatewayWorker("Add", clientGateway)
 }
 
 // removeDefaultGateway removes a default route.
-func removeDefaultGateway(clientGateway string) (err error) {
+func removeDefaultGateway(clientGateway string) error {
 	return defaultGatewayWorker("Del", clientGateway)
 }
 
@@ -255,22 +259,22 @@ func executeYggdrasilCtl(cmd ...string) (out []byte, err error) {
 	return
 }
 
-func enableTunnelRouting() (err error) {
-	return tunnelRoutingWorker("true")
+func enableTunnelRouting() error {
+	return tunnelRoutingWorker(true)
 }
 
-func disableTunnelRouting() (err error) {
-	return tunnelRoutingWorker("false")
+func disableTunnelRouting() error {
+	return tunnelRoutingWorker(false)
 }
 
-func tunnelRoutingWorker(State string) (err error) {
+func tunnelRoutingWorker(state bool) (err error) {
 	out, err := executeYggdrasilCtl("gettunnelrouting")
 	if err != nil {
 		return
 	}
 
 	var matched bool
-	if State == "true" {
+	if state {
 		matched, err = regexp.Match("Tunnel routing is enabled", out)
 		if err != nil || matched {
 			return
@@ -282,36 +286,42 @@ func tunnelRoutingWorker(State string) (err error) {
 		}
 	}
 
-	_, err = executeYggdrasilCtl("settunnelrouting", "enabled="+State)
+	_, err = executeYggdrasilCtl("settunnelrouting", "enabled="+strconv.FormatBool(state))
 	if err != nil {
 		return
+	}
+	if state {
+		configChanges = append(configChanges, configChange{Name: "TunnelRouting", OldVal: false, NewVal: state})
 	}
 
 	return
 }
 
-func addLocalSubnet(Subnet string) (err error) {
-	return localSubnetWorker("add", Subnet)
+func addLocalSubnet(subnet string) error {
+	return localSubnetWorker("add", subnet)
 }
 
-func removeLocalSubnet(Subnet string) (err error) {
-	return localSubnetWorker("remove", Subnet)
+func removeLocalSubnet(subnet string) error {
+	return localSubnetWorker("remove", subnet)
 }
 
-func localSubnetWorker(Action string, Subnet string) (err error) {
+func localSubnetWorker(action string, subnet string) (err error) {
 	out, err := executeYggdrasilCtl("getsourcesubnets")
 	if err != nil {
 		return
 	}
 
-	matched, err := regexp.Match("- "+Subnet, out)
-	if err != nil || (Action == "add" && matched) || (Action == "remove" && !matched) {
+	matched, err := regexp.Match("- "+subnet, out)
+	if err != nil || (action == "add" && matched) || (action == "remove" && !matched) {
 		return
 	}
 
-	_, err = executeYggdrasilCtl(Action+"localsubnet", "subnet="+Subnet)
+	_, err = executeYggdrasilCtl(action+"localsubnet", "subnet="+subnet)
 	if err != nil {
 		return
+	}
+	if action == "add" {
+		configChanges = append(configChanges, configChange{Name: "LocalSubnet", OldVal: "", NewVal: subnet})
 	}
 
 	return
