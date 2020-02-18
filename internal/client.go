@@ -148,7 +148,7 @@ func clientTearDownRoutes(clientIP string, clientNetMask int, clientGateway stri
 	return
 }
 
-func clientLoadConfig(path string) {
+func clientLoadConfig(path string) (fs *flag.FlagSet) {
 	config := "client"
 	if viper.Get("CONFIG") != nil {
 		config = viper.Get("CONFIG").(string)
@@ -157,10 +157,14 @@ func clientLoadConfig(path string) {
 	// Load the main config file
 	viper.SetConfigType("yaml")
 	viper.SetConfigName(config)
-	viper.AddConfigPath(path)
-	viper.AddConfigPath("/etc/autoygg/")
-	viper.AddConfigPath("$HOME/.autoygg")
-	viper.AddConfigPath(".")
+	if path == "" {
+		viper.AddConfigPath("/etc/autoygg/")
+		viper.AddConfigPath("$HOME/.autoygg")
+		viper.AddConfigPath(".")
+	} else {
+		// For testing
+		viper.AddConfigPath(path)
+	}
 	err := viper.ReadInConfig()
 	if _, ok := err.(viper.ConfigFileNotFoundError); ok {
 		// The client config file is optional
@@ -168,6 +172,35 @@ func clientLoadConfig(path string) {
 	} else if err != nil {
 		Fatal(fmt.Sprintln("Fatal error reading config file:", err.Error()))
 	}
+
+	fs = flag.NewFlagSet("Autoygg", flag.ContinueOnError)
+	fs.Usage = func() { clientUsage(fs) }
+
+	fs.Bool("daemon", true, "Run in daemon mode. The client will automatically renew its lease before it expires.")
+	fs.String("gatewayHost", "", "Yggdrasil IP address of the gateway host")
+	fs.String("gatewayPort", "8080", "port of the gateway daemon")
+	fs.String("defaultGatewayIP", "", "LAN default gateway IP address (autodiscovered by default)")
+	fs.String("defaultGatewayDev", "", "LAN default gateway device (autodiscovered by default)")
+	fs.String("yggdrasilInterface", "tun0", "Yggdrasil tunnel interface")
+	fs.String("action", "register", "action (register/renew/release)")
+	fs.Bool("debug", false, "debug output")
+	fs.Bool("quiet", false, "suppress non-error output")
+	fs.Bool("dumpConfig", false, "dump the configuration that would be used by autoygg-client and exit")
+	fs.Bool("help", false, "print usage and exit")
+
+	err = fs.Parse(os.Args[1:])
+	if err != nil {
+		Fatal(err)
+	}
+
+	viperLoadSharedDefaults()
+
+	err = viper.BindPFlags(fs)
+	if err != nil {
+		Fatal(err)
+	}
+
+	return
 }
 
 func renewLease(fs *flag.FlagSet) {
@@ -194,34 +227,7 @@ func doRequest(fs *flag.FlagSet, action string, gatewayHost string, gatewayPort 
 // ClientMain is the main() function for the client program
 func ClientMain() {
 	setupLogWriters()
-	clientLoadConfig("")
-
-	fs := flag.NewFlagSet("Autoygg", flag.ContinueOnError)
-	fs.Usage = func() { clientUsage(fs) }
-
-	fs.Bool("daemon", true, "Run in daemon mode. The client will automatically renew its lease before it expires.")
-	fs.String("gatewayHost", "", "Yggdrasil IP address of the gateway host")
-	fs.String("gatewayPort", "8080", "port of the gateway daemon")
-	fs.String("defaultGatewayIP", "", "LAN default gateway IP address (autodiscovered by default)")
-	fs.String("defaultGatewayDev", "", "LAN default gateway device (autodiscovered by default)")
-	fs.String("yggdrasilInterface", "tun0", "Yggdrasil tunnel interface")
-	fs.String("action", "register", "action (register/renew/release)")
-	fs.Bool("debug", false, "debug output")
-	fs.Bool("quiet", false, "suppress non-error output")
-	fs.Bool("dumpConfig", false, "dump the configuration that would be used by autoygg-client and exit")
-	fs.Bool("help", false, "print usage and exit")
-
-	err := fs.Parse(os.Args[1:])
-	if err != nil {
-		Fatal(err)
-	}
-
-	viperLoadSharedDefaults()
-
-	err = viper.BindPFlags(fs)
-	if err != nil {
-		Fatal(err)
-	}
+	fs := clientLoadConfig("")
 
 	if viper.GetBool("Help") {
 		clientUsage(fs)
@@ -229,7 +235,8 @@ func ClientMain() {
 	}
 
 	if viper.GetBool("DumpConfig") {
-		dumpConfiguration()
+		fmt.Print(dumpConfiguration())
+		os.Exit(0)
 	}
 
 	if viper.GetString("GatewayHost") == "" || viper.GetString("Action") == "" {
@@ -244,6 +251,8 @@ func ClientMain() {
 	if r.Error != "" {
 		Fatal(r.Error)
 	}
+
+	var err error
 
 	if viper.GetString("Action") == "release" {
 		err = clientTearDownRoutes(r.ClientIP, r.ClientNetMask, r.ClientGateway, r.GatewayPublicKey)

@@ -448,10 +448,9 @@ func serverLoadConfigDefaults() {
 	} else {
 		viper.SetDefault("GatewayPublicKey", gatewayPublicKey)
 	}
-
 }
 
-func serverLoadConfig(path string) {
+func serverLoadConfig(path string) (fs *flag.FlagSet) {
 	viperLoadSharedDefaults()
 	serverLoadConfigDefaults()
 
@@ -469,10 +468,15 @@ func serverLoadConfig(path string) {
 	// Load the main config file
 	viper.SetConfigType("yaml")
 	viper.SetConfigName(config)
-	viper.AddConfigPath(path)
-	viper.AddConfigPath("/etc/autoygg/")
-	viper.AddConfigPath("$HOME/.autoygg")
-	viper.AddConfigPath(".")
+	if path == "" {
+		viper.AddConfigPath(path)
+		viper.AddConfigPath("/etc/autoygg/")
+		viper.AddConfigPath("$HOME/.autoygg")
+		viper.AddConfigPath(".")
+	} else {
+		// For testing
+		viper.AddConfigPath(path)
+	}
 	err = viper.ReadInConfig()
 	if err != nil {
 		Fatal(fmt.Sprintln("Fatal error reading config file:", err.Error()))
@@ -493,6 +497,22 @@ func serverLoadConfig(path string) {
 	if viper.GetBool("Debug") {
 		debug = debugLog.Printf
 	}
+
+	fs = flag.NewFlagSet("Autoygg", flag.ContinueOnError)
+	fs.Usage = func() { serverUsage(fs) }
+	fs.Bool("dumpConfig", false, "dump the configuration that would be used by autoygg-server and exit")
+	fs.Bool("help", false, "print usage and exit")
+
+	err = fs.Parse(os.Args[1:])
+	if err != nil {
+		Fatal(err)
+	}
+
+	err = viper.BindPFlags(fs)
+	if err != nil {
+		Fatal(err)
+	}
+	return
 }
 
 func initializeViperList(name string, path string, list *map[string]bool) {
@@ -661,22 +681,7 @@ func ServerMain() {
 	// Enable the Prometheus endpoint
 	enablePrometheus = true
 
-	serverLoadConfig("")
-
-	fs := flag.NewFlagSet("Autoygg", flag.ContinueOnError)
-	fs.Usage = func() { serverUsage(fs) }
-	fs.Bool("dumpConfig", false, "dump the configuration that would be used by autoygg-server and exit")
-	fs.Bool("help", false, "print usage and exit")
-
-	err := fs.Parse(os.Args[1:])
-	if err != nil {
-		Fatal(err)
-	}
-
-	err = viper.BindPFlags(fs)
-	if err != nil {
-		Fatal(err)
-	}
+	fs := serverLoadConfig("")
 
 	if viper.GetBool("Help") {
 		serverUsage(fs)
@@ -684,8 +689,10 @@ func ServerMain() {
 	}
 
 	if viper.GetBool("DumpConfig") {
-		dumpConfiguration()
+		fmt.Print(dumpConfiguration())
+		os.Exit(0)
 	}
+	debug(dumpConfiguration())
 
 	if viper.GetString("StateDir") == "" {
 		fmt.Println("Error: StateDir must not be empty. Please check the configuration file.")
@@ -708,8 +715,9 @@ func ServerMain() {
 
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
+
 	go func() {
-		err = r.Run("[" + viper.GetString("ListenHost") + "]:" + viper.GetString("ListenPort"))
+		err := r.Run("[" + viper.GetString("ListenHost") + "]:" + viper.GetString("ListenPort"))
 		if err != nil {
 			log.Print("Starting autoygg server daemon")
 			handleError(err, false)

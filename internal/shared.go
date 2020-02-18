@@ -395,16 +395,16 @@ func setupLogWriters() {
 	log.SetOutput(new(logWriter))
 }
 
-func dumpConfiguration() {
+func dumpConfiguration() (config string) {
 	configMap := viper.AllSettings()
 	delete(configMap, "help") // do not include the "help" flag in the config dump
 	b, err := yaml.Marshal(configMap)
 	if err != nil {
 		Fatal(err)
 	}
-	fmt.Print("\nConfiguration as loaded from the config file and any command line arguments:\n\n")
-	fmt.Println(string(b))
-	os.Exit(0)
+	config = fmt.Sprint("\nConfiguration as loaded from the config file and any command line arguments:\n\n")
+	config += fmt.Sprintln(string(b))
+	return
 }
 
 func viperLoadSharedDefaults() {
