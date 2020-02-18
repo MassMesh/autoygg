@@ -1,6 +1,14 @@
 
 all: client server
 
+static: client-static server-static
+
+client-static:
+	cd cmd/autoygg-client && $(MAKE) static
+
+server-static:
+	cd cmd/autoygg-server && $(MAKE) static
+
 client:
 	cd cmd/autoygg-client && $(MAKE)
 

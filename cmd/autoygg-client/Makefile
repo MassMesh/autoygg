@@ -2,6 +2,9 @@
 build:
 	go build -ldflags "-s -w"
 
+static:
+	CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -ldflags '-s -w -extldflags "-static"'
+
 dev: lint test
 	go build -ldflags "-s -w"
 
