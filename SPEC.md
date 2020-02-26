@@ -10,6 +10,7 @@ Example Config
     GatewayDescription: "This is an Yggdrasil gateway operated for fun and profit"
     RequireRegistration: false
     RequireApproval: false
+    WhitelistEnabled: true
     StateDir: "/var/lib/autoygg"
     MaxClients: 10
     LeaseTimeoutSeconds: 14400
@@ -17,9 +18,6 @@ Example Config
     GatewayTunnelNetmask: 16
     GatewayTunnelIPRangeMin: "10.42.42.1"
     GatewayTunnelIPRangeMax: "10.42.42.255"
-    ACLEnabled: true
-    ACLMode: "blacklist"/"whitelist"
-    ACLFile: "ygg-acl"
     Debug: false
 
 Registration Model
@@ -46,6 +44,14 @@ Lease Model
     	LeaseExpires     time.Time
     }
 
+ACL Model
+
+    type acl struct {
+      YggIP string
+      action string // Whitelisted or Blacklisted
+      comment string
+    }
+
 ## Operating Modes
 ### Full Anonymous
 * Allows anybody to directly `GET /lease` to use the gateway, subject to ACL config
@@ -64,17 +70,27 @@ Lease Model
 ## Endpoints
   * `GET /info`: Returns GatewayOwner, Description, RequireRegistration, ACLEnabled
   * `GET /register`:
+    * Return access error if ACL check fails
     * If RequireRegistration=false: Disabled
     * If RequireRegistration=true: Return registration status for user if found or 404
   * `POST /register`:
+    * Return access error if ACL check fails
     * If RequireRegistration=false, Disabled
     * If ACLEnabled=true, apply ACLFile based on ACLMode, give access error if conditions not met
     * If RequireRegistration=true, Store registration information with Approved=false
       * Storing unapproved feels like the safer thing to do in case someone switches RequireApproval on and off
   * `POST /renew`:
+    * Return access error if ACL check fails
     * If RequireRegistration=true: Deny unless approved registration found
     * If ACLEnabled=true, apply ACLFile based on ACLMode, give access error if conditions not met
     * Assign lease, provision lease, and store in leases table
-  * `POST /release`: Remove lease from leases, teardown lease, and return success. Return 404 if lease doesn't exist
+  * `POST /release`:
+    * Return access error if ACL check fails
+    * Remove lease from leases, teardown lease, and return success. Return 404 if lease doesn't exist
+  * ACL Check Routine:
+    * If blacklist entry exists with client IP
+      * Return access error
+    * If WhitelistEnabled=true and whitelist entry does not exist with client IP
+      * Return access error
 
 # Client Operating Model
