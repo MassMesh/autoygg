@@ -48,8 +48,8 @@ ACL Model
 
     type acl struct {
       YggIP string
-      action string // Whitelisted or Blacklisted
-      comment string
+      Access bool      // True for whitelisted, false for blacklisted
+      Comment string
     }
 
 ## Operating Modes
