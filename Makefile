@@ -1,6 +1,8 @@
 
 all: client server
 
+build: client-amd64 server-amd64
+
 static: client-static server-static
 
 pi3: client-pi3 server-pi3
@@ -12,6 +14,12 @@ client:
 
 server:
 	cd cmd/autoygg-server && $(MAKE)
+
+client-amd64:
+	cd cmd/autoygg-client && $(MAKE) amd64
+
+server-amd64:
+	cd cmd/autoygg-server && $(MAKE) amd64
 
 client-static:
 	cd cmd/autoygg-client && $(MAKE) static
