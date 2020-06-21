@@ -174,7 +174,9 @@ func peerRouteWorker(action string, peer string, defaultGatewayIP string, defaul
 	}
 
 	cmd = viper.GetString(action + "PeerRouteCommand")
+	cmdNullroute := viper.GetString(action + "PeerNullRouteCommand")
 	cmd = strings.Replace(cmd, "%%Peer%%", peer, -1)
+	cmdNullroute = strings.Replace(cmdNullroute, "%%Peer%%", peer, -1)
 	if action == "Add" {
 		// defaultGatewayIP and defaultGatewayDevice are only set when adding
 		cmd = strings.Replace(cmd, "%%DefaultGatewayIP%%", defaultGatewayIP, -1)
@@ -183,6 +185,11 @@ func peerRouteWorker(action string, peer string, defaultGatewayIP string, defaul
 	_, err = exec.Command(viper.GetString("Shell"), viper.GetString("ShellCommandArg"), cmd).Output()
 	if err != nil {
 		err = fmt.Errorf("Unable to run `%s %s %s`: %s", viper.GetString("Shell"), viper.GetString("ShellCommandArg"), cmd, err)
+		return
+	}
+	_, err = exec.Command(viper.GetString("Shell"), viper.GetString("ShellCommandArg"), cmdNullroute).Output()
+	if err != nil {
+		err = fmt.Errorf("Unable to run `%s %s %s`: %s", viper.GetString("Shell"), viper.GetString("ShellCommandArg"), cmdNullroute, err)
 		return
 	}
 	return
@@ -416,7 +423,9 @@ func viperLoadSharedDefaults() {
 	viper.SetDefault("AddPeerRouteListCommand", "ip ro list %%Peer%% via %%DefaultGatewayIP%% dev %%DefaultGatewayDevice%%")
 	viper.SetDefault("DelPeerRouteListCommand", "ip ro list %%Peer%%")
 	viper.SetDefault("AddPeerRouteCommand", "ip ro add %%Peer%% via %%DefaultGatewayIP%% dev %%DefaultGatewayDevice%%")
+	viper.SetDefault("AddPeerNullRouteCommand", "ip ro replace blackhole %%Peer%% metric 500")
 	viper.SetDefault("DelPeerRouteCommand", "ip ro del %%Peer%%")
+	viper.SetDefault("DelPeerNullRouteCommand", "ip ro del blackhole %%Peer%% metric 500")
 	viper.SetDefault("GatewayAddRemoteSubnetCommand", "yggdrasilctl addremotesubnet subnet=%%Subnet%% box_pub_key=%%ClientPublicKey%%")
 	viper.SetDefault("GatewayDelRemoteSubnetCommand", "yggdrasilctl removeremotesubnet subnet=%%Subnet%% box_pub_key=%%ClientPublicKey%%")
 	viper.SetDefault("AddDefaultGatewayCommand", "ip ro add default via %%ClientGateway%%")
