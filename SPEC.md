@@ -48,7 +48,7 @@ ACL Model
 
     type acl struct {
       YggIP string
-      Access bool      // True for allowlisted, false for denylisted
+      Access bool      // True for allowed, false for denied
       Comment string
     }
 
@@ -88,9 +88,9 @@ ACL Model
     * Return access error if ACL check fails
     * Remove lease from leases, teardown lease, and return success. Return 404 if lease doesn't exist
   * ACL Check Routine:
-    * If denylist entry exists with client IP
+    * If acl entry exists for client IP with Access: false
       * Return access error
-    * If AllowlistEnabled=true and allowlist entry does not exist with client IP
+    * If AllowlistEnabled=true and acl entry does not exist for client IP with Access: true
       * Return access error
 
 # Client Operating Model

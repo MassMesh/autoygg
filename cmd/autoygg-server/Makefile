@@ -4,8 +4,10 @@ all: amd64 pi3 pi4 amd64-static
 amd64:
 	go build -ldflags "-s -w" -o autoygg-server-amd64
 
+# we use go-sqlite3 which requires CGO. The compile-time warnings about the use of getaddrinfo and dlopen do not seem
+# to cause runtime issues.
 amd64-static:
-	CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -ldflags '-s -w -extldflags "-static"' -o autoygg-server-amd64-static
+	CGO_ENABLED=1 GOOS=linux go build -a -installsuffix cgo -ldflags '-s -w -extldflags "-static"' -o autoygg-server-amd64-static
 
 pi3:
 	GOOS=linux GOARCH=arm GOARM=7 go build -ldflags "-s -w" -o autoygg-server-pi3

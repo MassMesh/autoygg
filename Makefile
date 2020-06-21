@@ -21,11 +21,11 @@ client-amd64:
 server-amd64:
 	cd cmd/autoygg-server && $(MAKE) amd64
 
-client-static:
-	cd cmd/autoygg-client && $(MAKE) static
+client-amd64-static:
+	cd cmd/autoygg-client && $(MAKE) amd64-static
 
-server-static:
-	cd cmd/autoygg-server && $(MAKE) static
+server-amd64-static:
+	cd cmd/autoygg-server && $(MAKE) amd64-static
 
 client-pi3:
 	cd cmd/autoygg-client && $(MAKE) pi3

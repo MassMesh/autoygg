@@ -4,7 +4,7 @@ ListenHost: "the:yggdrasil:ip:address:of:the:autoygg:server"
 ListenPort: 8080
 GatewayOwner: "You <you@example.com>"
 GatewayDescription: "This is an Yggdrasil gateway operated for fun and profit"
-AllowRegistration: false
+RequireRegistration: false
 StateDir: "/var/lib/autoygg"
 MaxClients: 10
 LeaseTimeoutSeconds: 14400
@@ -14,6 +14,4 @@ GatewayTunnelIPRangeMin: "10.42.42.1"
 GatewayTunnelIPRangeMax: "10.42.42.255"
 AllowlistEnabled: false
 AllowlistFile: "allowlist"
-DenylistEnabled: false
-DenylistFile: "denylist"
 Debug: false

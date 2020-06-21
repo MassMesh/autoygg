@@ -22,7 +22,6 @@ import (
 
 var (
 	allowlist map[string]bool
-	denylist map[string]bool
 )
 
 var errorCount = prometheus.NewCounterVec(
@@ -56,18 +55,10 @@ func enablePrometheusEndpoint() (p *ginprometheus.Prometheus) {
 }
 
 func registrationAllowed(address string) bool {
-	if !viper.GetBool("AllowRegistration") {
+	if !viper.GetBool("RequireRegistration") {
 		// Registration is disabled. Reject.
-		debug("Registration is disabled, rejecting request from %s\n", address)
+		debug("Registration is not required, rejecting request from %s\n", address)
 		return false
-	}
-
-	if viper.GetBool("DenylistEnabled") {
-		if _, found := denylist[address]; found {
-			// The address is on the denylist. Reject.
-			debug("This address is denylisted, rejecting request from %s\n", address)
-			return false
-		}
 	}
 
 	if viper.GetBool("AllowlistEnabled") {
@@ -77,11 +68,11 @@ func registrationAllowed(address string) bool {
 			return true
 		}
 	} else {
-		// The allowlist is disabled and registration is allowed. Accept.
-		debug("Allowlist disabled and registration is allowed, accepted request from %s\n", address)
+		// The allowlist is disabled and registration is required. Accept.
+		debug("Allowlist disabled and registration is required, accepted request from %s\n", address)
 		return true
 	}
-	debug("Allowlist enabled and registration is allowed, address not on allowlist, rejected request from %s\n", address)
+	debug("Allowlist enabled and registration is required, address not on allowlist, rejected request from %s\n", address)
 	return false
 }
 
@@ -387,7 +378,7 @@ func setupRouter(db *gorm.DB) (r *gin.Engine) {
 			res := info{
 				GatewayOwner:         viper.GetString("GatewayOwner"),
 				Description:          viper.GetString("GatewayDescription"),
-				RegistrationRequired: viper.GetBool("AllowRegistration") && viper.GetBool("AllowlistEnabled"),
+				RegistrationRequired: viper.GetBool("RequireRegistration"),
 			}
 			c.JSON(http.StatusOK, res)
 		})
@@ -411,7 +402,8 @@ func setupRouter(db *gorm.DB) (r *gin.Engine) {
 func setupDB(driver string, credentials string) (db *gorm.DB) {
 	db, err := gorm.Open(driver, credentials)
 	if err != nil {
-		Fatal("Couldn't initialize database connection")
+    fmt.Printf("%s\n", err)
+    Fatal("Couldn't initialize database connection")
 	}
 	db.LogMode(true)
 
@@ -426,8 +418,8 @@ func serverLoadConfigDefaults() {
 	viper.SetDefault("ListenPort", "8080")
 	viper.SetDefault("GatewayOwner", "Some One <someone@example.com>")
 	viper.SetDefault("GatewayDescription", "This is an Yggdrasil gateway operated for fun.")
-	viper.SetDefault("AllowRegistration", true) //FIXME
-	viper.SetDefault("AutoApproveRegistration", false) //FIXME
+	viper.SetDefault("RequireRegistration", true)
+	viper.SetDefault("RequireApproval", true)
 	viper.SetDefault("StateDir", "/var/lib/autoygg")
 	viper.SetDefault("MaxClients", 10)
 	viper.SetDefault("LeaseTimeoutSeconds", 14400) // Default to 4 hours
@@ -436,9 +428,7 @@ func serverLoadConfigDefaults() {
 	viper.SetDefault("GatewayTunnelIPRangeMin", "10.42.42.1")   // Minimum IP for "DHCP" range
 	viper.SetDefault("GatewayTunnelIPRangeMax", "10.42.42.255") // Maximum IP for "DHCP" range
 	viper.SetDefault("AllowlistEnabled", true)
-	viper.SetDefault("AllowlistFile", "allowlist") // Name of the file that contains allowlisted clients, one per line. Omit .yaml extension.
-	viper.SetDefault("DenylistEnabled", true)
-	viper.SetDefault("DenylistFile", "denylist") // Name of the file that contains denylisted clients, one per line. Omit .yaml extension.
+	viper.SetDefault("AllowlistFile", "accesslist") // Name of the file that contains the accesslist. Omit .yaml extension.
 	viper.SetDefault("YggdrasilInterface", "tun0") // Name of the yggdrasil tunnel interface
 	viper.SetDefault("Debug", false)
 	gatewayPublicKey, err := getSelfPublicKey()
@@ -483,7 +473,6 @@ func serverLoadConfig(path string) (fs *flag.FlagSet) {
 	}
 
 	initializeViperList("Allowlist", path, &allowlist)
-	initializeViperList("Denylist", path, &denylist)
 
 	viper.WatchConfig() // Automatically reload the main config when it changes
 	viper.OnConfigChange(func(e fsnotify.Event) {
@@ -546,7 +535,7 @@ func initializeViperList(name string, path string, list *map[string]bool) {
 	}
 }
 
-// convert the allowlist/denylist viper slices into a map for cheap lookup
+// convert the allowlist viper slices into a map for cheap lookup
 func loadList(name string, localViper *viper.Viper) map[string]bool {
 	list := make(map[string]bool)
 	if !viper.GetBool(name + "Enabled") {
@@ -589,14 +578,14 @@ func ValidYggdrasilAddress(address string) bool {
 }
 
 func disableIPForwarding() error {
-	return iPForwardingWorker("0")
+	return IPForwardingWorker("0")
 }
 
 func enableIPForwarding() error {
-	return iPForwardingWorker("1")
+	return IPForwardingWorker("1")
 }
 
-func iPForwardingWorker(payload string) (err error) {
+func IPForwardingWorker(payload string) (err error) {
 	f, err := os.OpenFile("/proc/sys/net/ipv4/ip_forward", os.O_RDWR, 0644)
 	if err != nil {
 		return
