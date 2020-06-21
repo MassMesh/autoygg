@@ -12,8 +12,8 @@ GatewayTunnelIP: "10.42.0.1"
 GatewayTunnelNetmask: 16
 GatewayTunnelIPRangeMin: "10.42.42.1"
 GatewayTunnelIPRangeMax: "10.42.42.255"
-WhitelistEnabled: false
-WhitelistFile: "whitelist"
-BlacklistEnabled: false
-BlacklistFile: "whitelist"
+AllowlistEnabled: false
+AllowlistFile: "allowlist"
+DenylistEnabled: false
+DenylistFile: "denylist"
 Debug: false

@@ -21,8 +21,8 @@ import (
 )
 
 var (
-	whitelist map[string]bool
-	blacklist map[string]bool
+	allowlist map[string]bool
+	denylist map[string]bool
 )
 
 var errorCount = prometheus.NewCounterVec(
@@ -62,26 +62,26 @@ func registrationAllowed(address string) bool {
 		return false
 	}
 
-	if viper.GetBool("BlacklistEnabled") {
-		if _, found := blacklist[address]; found {
-			// The address is on the blacklist. Reject.
-			debug("This address is blacklisted, rejecting request from %s\n", address)
+	if viper.GetBool("DenylistEnabled") {
+		if _, found := denylist[address]; found {
+			// The address is on the denylist. Reject.
+			debug("This address is denylisted, rejecting request from %s\n", address)
 			return false
 		}
 	}
 
-	if viper.GetBool("WhitelistEnabled") {
-		if _, found := whitelist[address]; found {
-			// The address is on the whitelist. Accept.
-			debug("This address is whitelisted, accepted request from %s\n", address)
+	if viper.GetBool("AllowlistEnabled") {
+		if _, found := allowlist[address]; found {
+			// The address is on the allowlist. Accept.
+			debug("This address is allowlisted, accepted request from %s\n", address)
 			return true
 		}
 	} else {
-		// The whitelist is disabled and registration is allowed. Accept.
-		debug("Whitelist disabled and registration is allowed, accepted request from %s\n", address)
+		// The allowlist is disabled and registration is allowed. Accept.
+		debug("Allowlist disabled and registration is allowed, accepted request from %s\n", address)
 		return true
 	}
-	debug("Whitelist enabled and registration is allowed, address not on whitelist, rejected request from %s\n", address)
+	debug("Allowlist enabled and registration is allowed, address not on allowlist, rejected request from %s\n", address)
 	return false
 }
 
@@ -387,7 +387,7 @@ func setupRouter(db *gorm.DB) (r *gin.Engine) {
 			res := info{
 				GatewayOwner:         viper.GetString("GatewayOwner"),
 				Description:          viper.GetString("GatewayDescription"),
-				RegistrationRequired: viper.GetBool("AllowRegistration") && viper.GetBool("WhitelistEnabled"),
+				RegistrationRequired: viper.GetBool("AllowRegistration") && viper.GetBool("AllowlistEnabled"),
 			}
 			c.JSON(http.StatusOK, res)
 		})
@@ -426,8 +426,8 @@ func serverLoadConfigDefaults() {
 	viper.SetDefault("ListenPort", "8080")
 	viper.SetDefault("GatewayOwner", "Some One <someone@example.com>")
 	viper.SetDefault("GatewayDescription", "This is an Yggdrasil gateway operated for fun.")
-	viper.SetDefault("AllowRegistration", true)
-	viper.SetDefault("AutoApproveRegistration", false)
+	viper.SetDefault("AllowRegistration", true) //FIXME
+	viper.SetDefault("AutoApproveRegistration", false) //FIXME
 	viper.SetDefault("StateDir", "/var/lib/autoygg")
 	viper.SetDefault("MaxClients", 10)
 	viper.SetDefault("LeaseTimeoutSeconds", 14400) // Default to 4 hours
@@ -435,10 +435,10 @@ func serverLoadConfigDefaults() {
 	viper.SetDefault("GatewayTunnelNetMask", 16)
 	viper.SetDefault("GatewayTunnelIPRangeMin", "10.42.42.1")   // Minimum IP for "DHCP" range
 	viper.SetDefault("GatewayTunnelIPRangeMax", "10.42.42.255") // Maximum IP for "DHCP" range
-	viper.SetDefault("WhitelistEnabled", true)
-	viper.SetDefault("WhitelistFile", "whitelist") // Name of the file that contains whitelisted clients, one per line. Omit .yaml extension.
-	viper.SetDefault("BlacklistEnabled", true)
-	viper.SetDefault("BlacklistFile", "blacklist") // Name of the file that contains blacklisted clients, one per line. Omit .yaml extension.
+	viper.SetDefault("AllowlistEnabled", true)
+	viper.SetDefault("AllowlistFile", "allowlist") // Name of the file that contains allowlisted clients, one per line. Omit .yaml extension.
+	viper.SetDefault("DenylistEnabled", true)
+	viper.SetDefault("DenylistFile", "denylist") // Name of the file that contains denylisted clients, one per line. Omit .yaml extension.
 	viper.SetDefault("YggdrasilInterface", "tun0") // Name of the yggdrasil tunnel interface
 	viper.SetDefault("Debug", false)
 	gatewayPublicKey, err := getSelfPublicKey()
@@ -482,8 +482,8 @@ func serverLoadConfig(path string) (fs *flag.FlagSet) {
 		Fatal(fmt.Sprintln("Fatal error reading config file:", err.Error()))
 	}
 
-	initializeViperList("Whitelist", path, &whitelist)
-	initializeViperList("Blacklist", path, &blacklist)
+	initializeViperList("Allowlist", path, &allowlist)
+	initializeViperList("Denylist", path, &denylist)
 
 	viper.WatchConfig() // Automatically reload the main config when it changes
 	viper.OnConfigChange(func(e fsnotify.Event) {
@@ -546,7 +546,7 @@ func initializeViperList(name string, path string, list *map[string]bool) {
 	}
 }
 
-// convert the whitelist/blacklist viper slices into a map for cheap lookup
+// convert the allowlist/denylist viper slices into a map for cheap lookup
 func loadList(name string, localViper *viper.Viper) map[string]bool {
 	list := make(map[string]bool)
 	if !viper.GetBool(name + "Enabled") {

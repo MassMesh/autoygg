@@ -10,7 +10,7 @@ Example Config
     GatewayDescription: "This is an Yggdrasil gateway operated for fun and profit"
     RequireRegistration: false
     RequireApproval: false
-    WhitelistEnabled: true
+    AllowlistEnabled: true
     StateDir: "/var/lib/autoygg"
     MaxClients: 10
     LeaseTimeoutSeconds: 14400
@@ -48,7 +48,7 @@ ACL Model
 
     type acl struct {
       YggIP string
-      Access bool      // True for whitelisted, false for blacklisted
+      Access bool      // True for allowlisted, false for denylisted
       Comment string
     }
 
@@ -88,9 +88,9 @@ ACL Model
     * Return access error if ACL check fails
     * Remove lease from leases, teardown lease, and return success. Return 404 if lease doesn't exist
   * ACL Check Routine:
-    * If blacklist entry exists with client IP
+    * If denylist entry exists with client IP
       * Return access error
-    * If WhitelistEnabled=true and whitelist entry does not exist with client IP
+    * If AllowlistEnabled=true and allowlist entry does not exist with client IP
       * Return access error
 
 # Client Operating Model
