@@ -1,10 +1,13 @@
 package internal
 
 import (
+	"encoding/json"
 	"fmt"
 	"github.com/jinzhu/gorm"
 	"github.com/spf13/viper"
+	"github.com/yggdrasil-network/yggdrasil-go/src/config"
 	"gopkg.in/yaml.v2"
+	"io"
 	"log"
 	"os"
 	"os/exec"
@@ -236,6 +239,7 @@ func yggdrasilPeers() (peers []string, err error) {
 	if err != nil {
 		return
 	}
+	peerRe := regexp.MustCompile(` .*?://(.*):\d+? `)
 	for _, l := range strings.Split(string(out), "\n") {
 		matched = re.MatchString(l)
 		if !matched {
@@ -246,8 +250,7 @@ func yggdrasilPeers() (peers []string, err error) {
 			// Skip ourselves
 			continue
 		}
-		re := regexp.MustCompile(` .*?://(.*):\d+? `)
-		match := re.FindStringSubmatch(strings.TrimSpace(l))
+		match := peerRe.FindStringSubmatch(strings.TrimSpace(l))
 		if len(match) < 1 {
 			err = fmt.Errorf("Unable to parse yggdrasilctl output: %s", l)
 			return
@@ -259,6 +262,64 @@ func yggdrasilPeers() (peers []string, err error) {
 			continue
 		}
 		peers = append(peers, match[1])
+	}
+
+	/* Yggdrasilctl will not list peers for which a circuit is not currently
+	   established. To work around this, add all peers defined in the config
+	   file. This is mostly a backstop against yggdrasil bugs; we don't ever
+	   want to route non-ygg traffic for our peers via the yggdrasil tunnel.
+	*/
+	var conf []byte
+	err = exec.Command("which", "ygguci").Run()
+	if err != nil {
+		err = fmt.Errorf("Unable to run command `which ygguci`: %s", err)
+		return
+	}
+	if err == nil {
+		// Running on openwrt.
+		var rawconf []byte
+		rawconf, err = exec.Command("ygguci", "get").Output()
+		if err != nil {
+			err = fmt.Errorf("Unable to run command `ygguci get`: %s", err)
+			return
+		}
+		cmd := exec.Command("yggdrasil", "-useconf", "-normaliseconf", "-json")
+		var stdin io.WriteCloser
+		stdin, err = cmd.StdinPipe()
+		if err != nil {
+			return
+		}
+		go func() {
+			defer stdin.Close()
+			stdin.Write(rawconf)
+		}()
+		conf, err = cmd.Output()
+		if err != nil {
+			err = fmt.Errorf("Unable to run command `yggdrasil -useconf -normaliseconf -json`: %s", err)
+			return
+		}
+	} else {
+		// Running elsewhere. Assume config file is in the standard location.
+		conf, err = exec.Command("yggdrasil", "-useconffile", "/etc/yggdrasil.conf", "-normaliseconf", "-json").Output()
+		if err != nil {
+			err = fmt.Errorf("Unable to run command `yggdrasil -useconffile /etc/yggdrasil.conf -normaliseconf -json`: %s", err)
+			return
+		}
+	}
+	var config config.NodeConfig
+	err = json.Unmarshal(conf, &config)
+	if err != nil {
+		err = fmt.Errorf("Unable to parse yggdrasil config: %s", conf)
+		return
+	}
+	for _, peer := range config.Peers {
+		match := peerRe.FindStringSubmatch(" " + peer + " ")
+		if len(match) > 0 {
+			peers = append(peers, match[1])
+		} else {
+			err = fmt.Errorf("Unable to parse peer from yggdrasil config: %s", peer)
+			return
+		}
 	}
 	return
 }
