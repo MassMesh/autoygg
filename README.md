@@ -19,8 +19,7 @@ internet.
 
 GNU Make and a Go compiler, version 1.11 or higher are required.
 
-Build server and client software with the *make* command from the root of the
-tree. The resulting binaries will be in the
+Build server and client software for amd64 (e.g. the APU2) with the *make* command from the root of the tree. The resulting binaries will be in the
 
 ```
 cmd/autoygg-client/
@@ -29,19 +28,9 @@ cmd/autoygg-server/
 
 directories.
 
-It is also possible to build just the client. For example, to build for amd64 (e.g. to run on an APU2 target):
+It is also possible to build just the client or server: use *make client* or *make server*.
 
-```
-$ cd cmd/autoygg-client/
-$ make
-```
-
-To build for arm64 (e.g. to run on a Raspberry Pi 4):
-
-```
-$ cd cmd/autoygg-client/
-$ GOARCH=arm64 make
-```
+To build the client for Raspberry Pi 4, use *make client-rpi4*. To build client and server for the Raspberry Pi 3, use *make rpi3*.
 
 ## Quick start
 
