@@ -28,9 +28,25 @@ cmd/autoygg-server/
 
 directories.
 
-It is also possible to build just the client or server: use *make client* or *make server*.
+Building for the _Raspberry Pi 4_ and _Raspberry Pi 3_ is also supported. Building statically linked binaries for amd64 is supported.
 
-To build the client for Raspberry Pi 4, use *make client-rpi4*. To build client and server for the Raspberry Pi 3, use *make rpi3*.
+This is the list of build targets:
+
+|Command|Target|Builds|
+|-------|------|--------|
+|make   |all   |client and server|
+|make amd64|amd64|client and server|
+|make rpi4|rpi4|client and server|
+|make rpi3|rpi3|client and server|
+|make client-amd64|amd64|client|
+|make server-amd64|amd64|server|
+|make client-rpi4|rpi4|client|
+|make server-rpi4|rpi4|server|
+|make client-rpi3|rpi3|client|
+|make server-rpi3|rpi3|server|
+|make static|amd64|client and server, statically compiled|
+|make client-amd64-static|amd64|client, statically compiled|
+|make server-amd64-static|amd64|server, statically compiled|
 
 ## Quick start
 

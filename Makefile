@@ -1,13 +1,13 @@
 
 all: client server
 
-build: client-amd64 server-amd64
+static: client-amd64-static server-amd64-static
 
-static: client-static server-static
+amd64: client-amd64 server-amd64
 
-pi3: client-pi3 server-pi3
+pi3: client-rpi3 server-rpi3
 
-pi4: client-pi4 server-pi4
+pi4: client-rpi4 server-rpi4
 
 client:
 	cd cmd/autoygg-client && $(MAKE)
@@ -27,17 +27,17 @@ client-amd64-static:
 server-amd64-static:
 	cd cmd/autoygg-server && $(MAKE) amd64-static
 
-client-pi3:
-	cd cmd/autoygg-client && $(MAKE) pi3
+client-rpi3:
+	cd cmd/autoygg-client && $(MAKE) rpi3
 
-server-pi3:
-	cd cmd/autoygg-server && $(MAKE) pi3
+server-rpi3:
+	cd cmd/autoygg-server && $(MAKE) rpi3
 
-client-pi4:
-	cd cmd/autoygg-client && $(MAKE) pi4
+client-rpi4:
+	cd cmd/autoygg-client && $(MAKE) rpi4
 
-server-pi4:
-	cd cmd/autoygg-server && $(MAKE) pi4
+server-rpi4:
+	cd cmd/autoygg-server && $(MAKE) rpi4
 
 dev: gofmt client-dev server-dev
 

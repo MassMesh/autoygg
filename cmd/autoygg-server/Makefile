@@ -1,5 +1,5 @@
 
-all: amd64 pi3 pi4 amd64-static
+all: amd64 rpi3 rpi4
 
 amd64:
 	go build -ldflags "-s -w" -o autoygg-server-amd64
@@ -9,11 +9,11 @@ amd64:
 amd64-static:
 	CGO_ENABLED=1 GOOS=linux go build -a -installsuffix cgo -ldflags '-s -w -extldflags "-static"' -o autoygg-server-amd64-static
 
-pi3:
-	GOOS=linux GOARCH=arm GOARM=7 go build -ldflags "-s -w" -o autoygg-server-pi3
+rpi3:
+	GOOS=linux GOARCH=arm GOARM=7 go build -ldflags "-s -w" -o autoygg-server-rpi3
 
-pi4:
-	GOOS=linux GOARCH=arm64 go build -ldflags "-s -w" -o autoygg-server-pi4
+rpi4:
+	GOOS=linux GOARCH=arm64 go build -ldflags "-s -w" -o autoygg-server-rpi4
 
 dev: lint test
 	go build -ldflags "-s -w"
