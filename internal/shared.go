@@ -225,6 +225,17 @@ func defaultGatewayWorker(action string, clientGateway string) (err error) {
 //200:40ff:e447:5bb6:13ee:8a9a:e71d:b6ee  817789         0             tcp://[fe80::109a:683d:a72:c4f5%wlan0]:45279  2     tcp    11:16:30
 //201:44e1:28f0:af3c:cf1b:6e2a:79bd:44b0  14578499       14497520      tcp://50.236.201.218:56088                    3     tcp    11:15:45
 func yggdrasilPeers() (peers []string, err error) {
+
+	peers, err = yggdrasilRunningPeers(peers)
+	if err != nil {
+		return
+	}
+	peers, err = yggdrasilConfigPeers(peers)
+	return
+}
+
+func yggdrasilRunningPeers(startingPeers []string) (peers []string, err error) {
+	peers = startingPeers
 	selfAddress, err := getSelfAddress()
 	if err != nil {
 		return
@@ -263,12 +274,17 @@ func yggdrasilPeers() (peers []string, err error) {
 		}
 		peers = append(peers, match[1])
 	}
+	return
+}
 
+func yggdrasilConfigPeers(startingPeers []string) (peers []string, err error) {
 	/* Yggdrasilctl will not list peers for which a circuit is not currently
 	   established. To work around this, add all peers defined in the config
 	   file. This is mostly a backstop against yggdrasil bugs; we don't ever
 	   want to route non-ygg traffic for our peers via the yggdrasil tunnel.
 	*/
+	peers = startingPeers
+	peerRe := regexp.MustCompile(` .*?://(.*):\d+? `)
 	var conf []byte
 	err = exec.Command("which", "ygguci").Run()
 	if err != nil {
@@ -291,7 +307,10 @@ func yggdrasilPeers() (peers []string, err error) {
 		}
 		go func() {
 			defer stdin.Close()
-			stdin.Write(rawconf)
+			_, err := stdin.Write(rawconf)
+			if err != nil {
+				Fatal(err)
+			}
 		}()
 		conf, err = cmd.Output()
 		if err != nil {
@@ -470,7 +489,7 @@ func dumpConfiguration() (config string) {
 	if err != nil {
 		Fatal(err)
 	}
-	config = fmt.Sprint("\nConfiguration as loaded from the config file and any command line arguments:\n\n")
+	config = "\nConfiguration as loaded from the config file and any command line arguments:\n\n"
 	config += fmt.Sprintln(string(b))
 	return
 }

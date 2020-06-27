@@ -402,8 +402,8 @@ func setupRouter(db *gorm.DB) (r *gin.Engine) {
 func setupDB(driver string, credentials string) (db *gorm.DB) {
 	db, err := gorm.Open(driver, credentials)
 	if err != nil {
-    fmt.Printf("%s\n", err)
-    Fatal("Couldn't initialize database connection")
+		fmt.Printf("%s\n", err)
+		Fatal("Couldn't initialize database connection")
 	}
 	db.LogMode(true)
 
@@ -429,7 +429,7 @@ func serverLoadConfigDefaults() {
 	viper.SetDefault("GatewayTunnelIPRangeMax", "10.42.42.255") // Maximum IP for "DHCP" range
 	viper.SetDefault("AllowlistEnabled", true)
 	viper.SetDefault("AllowlistFile", "accesslist") // Name of the file that contains the accesslist. Omit .yaml extension.
-	viper.SetDefault("YggdrasilInterface", "tun0") // Name of the yggdrasil tunnel interface
+	viper.SetDefault("YggdrasilInterface", "tun0")  // Name of the yggdrasil tunnel interface
 	viper.SetDefault("Debug", false)
 	gatewayPublicKey, err := getSelfPublicKey()
 	if err != nil {
@@ -578,14 +578,14 @@ func ValidYggdrasilAddress(address string) bool {
 }
 
 func disableIPForwarding() error {
-	return IPForwardingWorker("0")
+	return ipForwardingWorker("0")
 }
 
 func enableIPForwarding() error {
-	return IPForwardingWorker("1")
+	return ipForwardingWorker("1")
 }
 
-func IPForwardingWorker(payload string) (err error) {
+func ipForwardingWorker(payload string) (err error) {
 	f, err := os.OpenFile("/proc/sys/net/ipv4/ip_forward", os.O_RDWR, 0644)
 	if err != nil {
 		return
