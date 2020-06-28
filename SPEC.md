@@ -10,7 +10,7 @@ Example Config
     GatewayDescription: "This is an Yggdrasil gateway operated for fun and profit"
     RequireRegistration: false
     RequireApproval: false
-    AllowlistEnabled: true
+    AccessListEnabled: true
     StateDir: "/var/lib/autoygg"
     MaxClients: 10
     LeaseTimeoutSeconds: 14400
@@ -90,7 +90,7 @@ ACL Model
   * ACL Check Routine:
     * If acl entry exists for client IP with Access: false
       * Return access error
-    * If AllowlistEnabled=true and acl entry does not exist for client IP with Access: true
+    * If AccessListEnabled=true and acl entry does not exist for client IP with Access: true
       * Return access error
 
 # Client Operating Model

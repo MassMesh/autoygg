@@ -72,7 +72,7 @@ Create a config file at */etc/autoygg/server.yaml*. A sample configuration file 
 ---
 ListenHost: "the:yggdrasil:ip:address:of:this:machine"
 RequireRegistration: true
-AllowlistEnabled: false
+AccessListEnabled: false
 GatewayTunnelIP: "10.42.0.1"
 GatewayTunnelNetmask: "16"
 ```
@@ -83,15 +83,15 @@ Get the value for 'ListenHost' by running
 $ yggdrasilctl getSelf
 ```
 
-*WARNING*: in this configuration, this autoygg server will provide internet egress to any client that registers itself. To limit which clients can use the server, change AllowlistEnabled to *true* in server.yaml and create a file named */etc/autoygg/accesslist.yaml*. Add your client yggdrasil IP to that file, e.g. like this:
+*WARNING*: in this configuration, this autoygg server will provide internet egress to any client that registers itself. To limit which clients can use the server, change AccessListEnabled to *true* in server.yaml and create a file named */etc/autoygg/accesslist.yaml*. Add your client yggdrasil IP to that file, e.g. like this:
 
 ```
 ---
-Allowlist:
+AccessList:
 - 200:1234:5678:9000:0000:0000:0000:0001
 ```
 
-Note: the `autoygg-server` program will automatically reload its config files when they change. There is no need to restart it after modifying the main config file or the allowlist.
+Note: the `autoygg-server` program will automatically reload its config files when they change. There is no need to restart it after modifying the main config file or the accesslist.
 
 2) run `autoygg-server`, e.g. in screen:
 

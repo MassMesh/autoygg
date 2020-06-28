@@ -21,7 +21,7 @@ import (
 )
 
 var (
-	allowlist map[string]bool
+	accesslist map[string]bool
 )
 
 var errorCount = prometheus.NewCounterVec(
@@ -61,18 +61,18 @@ func registrationAllowed(address string) bool {
 		return false
 	}
 
-	if viper.GetBool("AllowlistEnabled") {
-		if _, found := allowlist[address]; found {
-			// The address is on the allowlist. Accept.
-			debug("This address is allowlisted, accepted request from %s\n", address)
+	if viper.GetBool("AccessListEnabled") {
+		if _, found := accesslist[address]; found {
+			// The address is on the accesslist. Accept.
+			debug("This address is accesslisted, accepted request from %s\n", address)
 			return true
 		}
 	} else {
-		// The allowlist is disabled and registration is required. Accept.
-		debug("Allowlist disabled and registration is required, accepted request from %s\n", address)
+		// The accesslist is disabled and registration is required. Accept.
+		debug("AccessList disabled and registration is required, accepted request from %s\n", address)
 		return true
 	}
-	debug("Allowlist enabled and registration is required, address not on allowlist, rejected request from %s\n", address)
+	debug("AccessList enabled and registration is required, address not on accesslist, rejected request from %s\n", address)
 	return false
 }
 
@@ -427,9 +427,9 @@ func serverLoadConfigDefaults() {
 	viper.SetDefault("GatewayTunnelNetMask", 16)
 	viper.SetDefault("GatewayTunnelIPRangeMin", "10.42.42.1")   // Minimum IP for "DHCP" range
 	viper.SetDefault("GatewayTunnelIPRangeMax", "10.42.42.255") // Maximum IP for "DHCP" range
-	viper.SetDefault("AllowlistEnabled", true)
-	viper.SetDefault("AllowlistFile", "accesslist") // Name of the file that contains the accesslist. Omit .yaml extension.
-	viper.SetDefault("YggdrasilInterface", "tun0")  // Name of the yggdrasil tunnel interface
+	viper.SetDefault("AccessListEnabled", true)
+	viper.SetDefault("AccessListFile", "accesslist") // Name of the file that contains the accesslist. Omit .yaml extension.
+	viper.SetDefault("YggdrasilInterface", "tun0")   // Name of the yggdrasil tunnel interface
 	viper.SetDefault("Debug", false)
 	gatewayPublicKey, err := getSelfPublicKey()
 	if err != nil {
@@ -472,7 +472,7 @@ func serverLoadConfig(path string) (fs *flag.FlagSet) {
 		Fatal(fmt.Sprintln("Fatal error reading config file:", err.Error()))
 	}
 
-	initializeViperList("Allowlist", path, &allowlist)
+	initializeViperList("AccessList", path, &accesslist)
 
 	viper.WatchConfig() // Automatically reload the main config when it changes
 	viper.OnConfigChange(func(e fsnotify.Event) {
@@ -535,7 +535,7 @@ func initializeViperList(name string, path string, list *map[string]bool) {
 	}
 }
 
-// convert the allowlist viper slices into a map for cheap lookup
+// convert the accesslist viper slices into a map for cheap lookup
 func loadList(name string, localViper *viper.Viper) map[string]bool {
 	list := make(map[string]bool)
 	if !viper.GetBool(name + "Enabled") {

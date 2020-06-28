@@ -484,7 +484,7 @@ func setupLogWriters() {
 
 func dumpConfiguration() (config string) {
 	configMap := viper.AllSettings()
-	delete(configMap, "help") // do not include the "help" flag in the config dump
+	delete(configMap, "help")       // do not include the "help" flag in the config dump
 	delete(configMap, "dumpconfig") // do not include the "dumpconfig" flag in the config dump
 	b, err := yaml.Marshal(configMap)
 	if err != nil {

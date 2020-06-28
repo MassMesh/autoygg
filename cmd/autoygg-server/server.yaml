@@ -12,6 +12,6 @@ GatewayTunnelIP: "10.42.0.1"
 GatewayTunnelNetmask: 16
 GatewayTunnelIPRangeMin: "10.42.42.1"
 GatewayTunnelIPRangeMax: "10.42.42.255"
-AllowlistEnabled: false
-AllowlistFile: "allowlist"
+AccessListEnabled: false
+AccessListFile: "accesslist"
 Debug: false
