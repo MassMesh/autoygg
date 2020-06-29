@@ -148,7 +148,7 @@ func clientTearDownRoutes(clientIP string, clientNetMask int, clientGateway stri
 	return
 }
 
-func clientLoadConfig(path string) (fs *flag.FlagSet) {
+func clientLoadConfig(path string) {
 	config := "client"
 	if viper.Get("CONFIG") != nil {
 		config = viper.Get("CONFIG").(string)
@@ -172,7 +172,9 @@ func clientLoadConfig(path string) (fs *flag.FlagSet) {
 	} else if err != nil {
 		Fatal(fmt.Sprintln("Fatal error reading config file:", err.Error()))
 	}
+}
 
+func clientCreateFlagSet() (fs *flag.FlagSet) {
 	fs = flag.NewFlagSet("Autoygg", flag.ContinueOnError)
 	fs.Usage = func() { clientUsage(fs) }
 
@@ -186,9 +188,11 @@ func clientLoadConfig(path string) (fs *flag.FlagSet) {
 	fs.Bool("debug", false, "debug output")
 	fs.Bool("quiet", false, "suppress non-error output")
 	fs.Bool("dumpConfig", false, "dump the configuration that would be used by autoygg-client and exit")
+	fs.Bool("json", false, "dump the configuration in json format, rather than yaml (only relevant when used with --dumpConfig)")
+	fs.Bool("useConfig", false, "read configuration from stdin")
 	fs.Bool("help", false, "print usage and exit")
 
-	err = fs.Parse(os.Args[1:])
+	err := fs.Parse(os.Args[1:])
 	if err != nil {
 		Fatal(err)
 	}
@@ -227,7 +231,20 @@ func doRequest(fs *flag.FlagSet, action string, gatewayHost string, gatewayPort 
 // ClientMain is the main() function for the client program
 func ClientMain() {
 	setupLogWriters()
-	fs := clientLoadConfig("")
+
+	fs := clientCreateFlagSet()
+
+	if viper.GetBool("UseConfig") {
+		viper.SetConfigType("yaml")
+		viper.SetConfigName("client")
+		// Read the configuration from stdin. Used on openwrt.
+		err := viper.ReadConfig(os.Stdin)
+		if err != nil {
+			Fatal(err)
+		}
+	} else {
+		clientLoadConfig("")
+	}
 
 	if viper.GetBool("Help") {
 		clientUsage(fs)
@@ -243,6 +260,7 @@ func ClientMain() {
 		clientUsage(fs)
 		os.Exit(0)
 	}
+
 	if viper.GetBool("Debug") {
 		debug = debugLog.Printf
 	}

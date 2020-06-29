@@ -293,6 +293,7 @@ func yggdrasilConfigPeers(startingPeers []string) (peers []string, err error) {
 	}
 	if err == nil {
 		// Running on openwrt.
+		debug("Running on openwrt, converting `ygguci get` to yggdrasil configuration")
 		var rawconf []byte
 		rawconf, err = exec.Command("ygguci", "get").Output()
 		if err != nil {
@@ -486,12 +487,18 @@ func dumpConfiguration() (config string) {
 	configMap := viper.AllSettings()
 	delete(configMap, "help")       // do not include the "help" flag in the config dump
 	delete(configMap, "dumpconfig") // do not include the "dumpconfig" flag in the config dump
-	b, err := yaml.Marshal(configMap)
+
+	var b []byte
+	var err error
+	if viper.GetBool("Json") {
+		b, err = json.Marshal(configMap)
+	} else {
+		b, err = yaml.Marshal(configMap)
+	}
 	if err != nil {
 		Fatal(err)
 	}
-	config = "\nConfiguration as loaded from the config file and any command line arguments:\n\n"
-	config += fmt.Sprintln(string(b))
+	config = fmt.Sprintln(string(b))
 	return
 }
 
