@@ -189,6 +189,7 @@ func clientCreateFlagSet() (fs *flag.FlagSet) {
 	fs.Bool("quiet", false, "suppress non-error output")
 	fs.Bool("dumpConfig", false, "dump the configuration that would be used by autoygg-client and exit")
 	fs.Bool("json", false, "dump the configuration in json format, rather than yaml (only relevant when used with --dumpConfig)")
+	fs.Bool("complete", false, "dump the complete configuration (default false, only relevant when used with --dumpConfig)")
 	fs.Bool("useConfig", false, "read configuration from stdin")
 	fs.Bool("help", false, "print usage and exit")
 
@@ -252,7 +253,7 @@ func ClientMain() {
 	}
 
 	if viper.GetBool("DumpConfig") {
-		fmt.Print(dumpConfiguration())
+		fmt.Print(dumpConfiguration("client"))
 		os.Exit(0)
 	}
 

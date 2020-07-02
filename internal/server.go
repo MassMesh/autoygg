@@ -678,10 +678,10 @@ func ServerMain() {
 	}
 
 	if viper.GetBool("DumpConfig") {
-		fmt.Print(dumpConfiguration())
+		fmt.Print(dumpConfiguration("server"))
 		os.Exit(0)
 	}
-	debug(dumpConfiguration())
+	debug(dumpConfiguration("server"))
 
 	if viper.GetString("StateDir") == "" {
 		fmt.Println("Error: StateDir must not be empty. Please check the configuration file.")

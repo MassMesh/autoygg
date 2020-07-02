@@ -483,13 +483,25 @@ func setupLogWriters() {
 	log.SetOutput(new(logWriter))
 }
 
-func dumpConfiguration() (config string) {
+func dumpConfiguration(app string) (config string) {
 	configMap := viper.AllSettings()
 	delete(configMap, "help")       // do not include the "help" flag in the config dump
 	delete(configMap, "dumpconfig") // do not include the "dumpconfig" flag in the config dump
+	if app == "client" {
+		delete(configMap, "complete") // do not include the "complete" flag in the config dump
+	}
 
 	var b []byte
 	var err error
+	var minimalConfigMap map[string]interface{}
+	if app == "client" && !viper.GetBool("Complete") {
+		minimalConfigMap = make(map[string]interface{})
+		minimalConfigMap["gatewayhost"] = configMap["gatewayhost"]
+		minimalConfigMap["gatewayport"] = configMap["gatewayport"]
+		minimalConfigMap["yggdrasilinterface"] = configMap["yggdrasilinterface"]
+		minimalConfigMap["daemon"] = configMap["daemon"]
+		configMap = minimalConfigMap
+	}
 	if viper.GetBool("Json") {
 		b, err = json.Marshal(configMap)
 	} else {
