@@ -28,6 +28,12 @@ var (
 type logWriter struct {
 }
 
+func command(name string, arg ...string) (cmd *exec.Cmd) {
+	debug("%s %v", name, strings.NewReplacer("[", "", "]", "").Replace(fmt.Sprintf("%v", arg)))
+	cmd = exec.Command(name, arg...)
+	return
+}
+
 func (writer logWriter) Write(bytes []byte) (int, error) {
 	if !viper.GetBool("Quiet") {
 		// Strip the last character, it's a newline!
@@ -83,7 +89,7 @@ func tunnelIPWorker(action string, address string, netMask int) (err error) {
 	cmd := viper.GetString("ListTunnelRouteCommand")
 	cmd = strings.Replace(cmd, "%%YggdrasilInterface%%", viper.GetString("YggdrasilInterface"), -1)
 
-	out, err := exec.Command(viper.GetString("Shell"), viper.GetString("ShellCommandArg"), cmd).Output()
+	out, err := command(viper.GetString("Shell"), viper.GetString("ShellCommandArg"), cmd).Output()
 	if err != nil {
 		err = fmt.Errorf("Unable to run `%s %s %s`: %s", viper.GetString("Shell"), viper.GetString("ShellCommandArg"), cmd, err)
 		return
@@ -96,7 +102,7 @@ func tunnelIPWorker(action string, address string, netMask int) (err error) {
 		cmd = strings.Replace(cmd, "%%IPAddress%%", address, -1)
 		cmd = strings.Replace(cmd, "%%NetMask%%", strconv.Itoa(netMask), -1)
 		cmd = strings.Replace(cmd, "%%YggdrasilInterface%%", viper.GetString("YggdrasilInterface"), -1)
-		_, err = exec.Command(viper.GetString("Shell"), viper.GetString("ShellCommandArg"), cmd).Output()
+		_, err = command(viper.GetString("Shell"), viper.GetString("ShellCommandArg"), cmd).Output()
 		if err != nil {
 			err = fmt.Errorf("Unable to run `%s %s %s`: %s", viper.GetString("Shell"), viper.GetString("ShellCommandArg"), cmd, err)
 			return
@@ -135,7 +141,7 @@ func remoteSubnetWorker(action string, subnet string, publicKey string) (err err
 	cmd = strings.Replace(cmd, "%%Subnet%%", subnet, -1)
 	cmd = strings.Replace(cmd, "%%ClientPublicKey%%", publicKey, -1)
 
-	command := exec.Command(viper.GetString("Shell"), viper.GetString("ShellCommandArg"), cmd)
+	command := command(viper.GetString("Shell"), viper.GetString("ShellCommandArg"), cmd)
 	err = command.Run()
 	if err != nil {
 		err = fmt.Errorf("Unable to run `%s %s %s`: %s", viper.GetString("Shell"), viper.GetString("ShellCommandArg"), cmd, err)
@@ -146,17 +152,17 @@ func remoteSubnetWorker(action string, subnet string, publicKey string) (err err
 
 // addPeerRoute adds a route for an yggdrasil peer. It runs the command
 //   ip ro add <peer_ip> via <wan_gw> dev <wan_dev>
-func addPeerRoute(peer string, defaultGatewayIP string, defaultGatewayDevice string) error {
+func addPeerRoute(peer string, defaultGatewayIP string, defaultGatewayDevice string) (bool, error) {
 	return peerRouteWorker("Add", peer, defaultGatewayIP, defaultGatewayDevice)
 }
 
 // removePeerRoute removes a route for an yggdrasil peer. It runs the command
 //   ip ro del <peer_ip>
-func removePeerRoute(peer string) error {
+func removePeerRoute(peer string) (bool, error) {
 	return peerRouteWorker("Del", peer, "", "")
 }
 
-func peerRouteWorker(action string, peer string, defaultGatewayIP string, defaultGatewayDevice string) (err error) {
+func peerRouteWorker(action string, peer string, defaultGatewayIP string, defaultGatewayDevice string) (change bool, err error) {
 	cmd := viper.GetString(action + "PeerRouteListCommand")
 	cmd = strings.Replace(cmd, "%%Peer%%", peer, -1)
 	if action == "Add" {
@@ -165,13 +171,18 @@ func peerRouteWorker(action string, peer string, defaultGatewayIP string, defaul
 		cmd = strings.Replace(cmd, "%%DefaultGatewayDevice%%", defaultGatewayDevice, -1)
 	}
 
-	out, err := exec.Command(viper.GetString("Shell"), viper.GetString("ShellCommandArg"), cmd).Output()
+	out, err := command(viper.GetString("Shell"), viper.GetString("ShellCommandArg"), cmd).Output()
 	if err != nil {
 		err = fmt.Errorf("Unable to run `%s %s %s`: %s", viper.GetString("Shell"), viper.GetString("ShellCommandArg"), cmd, err)
 		return
 	}
 
-	if (action == "Add" && strings.TrimSpace(string(out)) == peer) || (action == "Del" && len(out) == 1) {
+	matched, err := regexp.Match(`^`+peer, out)
+	if err != nil {
+		return
+	}
+
+	if (action == "Add" && matched) || (action == "Del" && !matched) {
 		// Nothing to do!
 		return
 	}
@@ -185,16 +196,26 @@ func peerRouteWorker(action string, peer string, defaultGatewayIP string, defaul
 		cmd = strings.Replace(cmd, "%%DefaultGatewayIP%%", defaultGatewayIP, -1)
 		cmd = strings.Replace(cmd, "%%DefaultGatewayDevice%%", defaultGatewayDevice, -1)
 	}
-	_, err = exec.Command(viper.GetString("Shell"), viper.GetString("ShellCommandArg"), cmd).Output()
+	_, err = command(viper.GetString("Shell"), viper.GetString("ShellCommandArg"), cmd).Output()
 	if err != nil {
 		err = fmt.Errorf("Unable to run `%s %s %s`: %s", viper.GetString("Shell"), viper.GetString("ShellCommandArg"), cmd, err)
 		return
 	}
-	_, err = exec.Command(viper.GetString("Shell"), viper.GetString("ShellCommandArg"), cmdNullroute).Output()
+	_, err = command(viper.GetString("Shell"), viper.GetString("ShellCommandArg"), cmdNullroute).Output()
 	if err != nil {
 		err = fmt.Errorf("Unable to run `%s %s %s`: %s", viper.GetString("Shell"), viper.GetString("ShellCommandArg"), cmdNullroute, err)
 		return
 	}
+
+	// Flush the route cache
+	cmdFlushRouteCache := "ip route flush cache"
+	_, err = command(viper.GetString("Shell"), viper.GetString("ShellCommandArg"), cmdFlushRouteCache).Output()
+	if err != nil {
+		err = fmt.Errorf("Unable to run `%s %s %s`: %s", viper.GetString("Shell"), viper.GetString("ShellCommandArg"), cmdFlushRouteCache, err)
+		return
+	}
+	change = true
+
 	return
 }
 
@@ -212,8 +233,16 @@ func defaultGatewayWorker(action string, clientGateway string) (err error) {
 	cmd := viper.GetString(action + "DefaultGatewayCommand")
 	cmd = strings.Replace(cmd, "%%ClientGateway%%", clientGateway, -1)
 
-	_, err = exec.Command(viper.GetString("Shell"), viper.GetString("ShellCommandArg"), cmd).Output()
+	_, err = command(viper.GetString("Shell"), viper.GetString("ShellCommandArg"), cmd).Output()
 	if err != nil {
+		// We can't do a ip ro list default command, that returns all routes. Instead, just
+		// check for a duplicate route error here and suppress it.
+		matched, _ := regexp.Match(`File exists`, err.(*exec.ExitError).Stderr)
+		if matched {
+			// The route already exists
+			err = nil
+			return
+		}
 		err = fmt.Errorf("Unable to run `%s %s %s`: %s", viper.GetString("Shell"), viper.GetString("ShellCommandArg"), cmd, err)
 	}
 	return
@@ -286,21 +315,21 @@ func yggdrasilConfigPeers(startingPeers []string) (peers []string, err error) {
 	peers = startingPeers
 	peerRe := regexp.MustCompile(` .*?://(.*):\d+? `)
 	var conf []byte
-	err = exec.Command("which", "ygguci").Run()
+	err = command("which", "ygguci").Run()
 	if err != nil {
 		err = fmt.Errorf("Unable to run command `which ygguci`: %s", err)
 		return
 	}
 	if err == nil {
 		// Running on openwrt.
-		debug("Running on openwrt, converting `ygguci get` to yggdrasil configuration")
+		debug("Detected OpenWrt, converting `ygguci get` to yggdrasil configuration")
 		var rawconf []byte
-		rawconf, err = exec.Command("ygguci", "get").Output()
+		rawconf, err = command("ygguci", "get").Output()
 		if err != nil {
 			err = fmt.Errorf("Unable to run command `ygguci get`: %s", err)
 			return
 		}
-		cmd := exec.Command("yggdrasil", "-useconf", "-normaliseconf", "-json")
+		cmd := command("yggdrasil", "-useconf", "-normaliseconf", "-json")
 		var stdin io.WriteCloser
 		stdin, err = cmd.StdinPipe()
 		if err != nil {
@@ -320,7 +349,7 @@ func yggdrasilConfigPeers(startingPeers []string) (peers []string, err error) {
 		}
 	} else {
 		// Running elsewhere. Assume config file is in the standard location.
-		conf, err = exec.Command("yggdrasil", "-useconffile", "/etc/yggdrasil.conf", "-normaliseconf", "-json").Output()
+		conf, err = command("yggdrasil", "-useconffile", "/etc/yggdrasil.conf", "-normaliseconf", "-json").Output()
 		if err != nil {
 			err = fmt.Errorf("Unable to run command `yggdrasil -useconffile /etc/yggdrasil.conf -normaliseconf -json`: %s", err)
 			return
@@ -345,7 +374,7 @@ func yggdrasilConfigPeers(startingPeers []string) (peers []string, err error) {
 }
 
 func executeYggdrasilCtl(cmd ...string) (out []byte, err error) {
-	out, err = exec.Command("yggdrasilctl", cmd...).Output()
+	out, err = command("yggdrasilctl", cmd...).Output()
 	if err != nil {
 		err = fmt.Errorf("Unable to run `yggdrasilctl %s`: %s", strings.Join(cmd, " "), err)
 	}
@@ -515,6 +544,7 @@ func dumpConfiguration(app string) (config string) {
 }
 
 func viperLoadSharedDefaults() {
+	viper.SetDefault("StateDir", "/var/lib/autoygg")
 	viper.SetDefault("Shell", "/bin/sh")
 	viper.SetDefault("ShellCommandArg", "-c")
 	viper.SetDefault("ListTunnelRouteCommand", "ip addr list %%YggdrasilInterface%%")

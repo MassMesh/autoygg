@@ -420,7 +420,6 @@ func serverLoadConfigDefaults() {
 	viper.SetDefault("GatewayDescription", "This is an Yggdrasil gateway operated for fun.")
 	viper.SetDefault("RequireRegistration", true)
 	viper.SetDefault("RequireApproval", true)
-	viper.SetDefault("StateDir", "/var/lib/autoygg")
 	viper.SetDefault("MaxClients", 10)
 	viper.SetDefault("LeaseTimeoutSeconds", 14400) // Default to 4 hours
 	viper.SetDefault("GatewayTunnelIP", "10.42.0.1")
