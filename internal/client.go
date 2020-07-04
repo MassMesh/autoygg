@@ -139,7 +139,7 @@ func clientSetupRoutes(clientIP string, clientNetMask int, clientGateway string,
 	err = addDefaultGateway(clientGateway)
 	handleError(err, false)
 
-	newState.State = "active"
+	newState.State = "connected"
 
 	// FIXME TODO:
 	// * replace default route, test connectivity, if fail, rollback?
@@ -231,6 +231,8 @@ func clientCreateFlagSet() (fs *flag.FlagSet) {
 	fs.Bool("json", false, "dump the configuration in json format, rather than yaml (only relevant when used with --dumpConfig)")
 	fs.Bool("complete", false, "dump the complete configuration (default false, only relevant when used with --dumpConfig)")
 	fs.Bool("useConfig", false, "read configuration from stdin")
+	fs.Bool("useUCI", false, "read configuration by executing 'autoygguci get'")
+	fs.Bool("state", false, "print current state in json format")
 	fs.Bool("help", false, "print usage and exit")
 
 	err := fs.Parse(os.Args[1:])
@@ -280,7 +282,7 @@ func doRequest(fs *flag.FlagSet, action string, gatewayHost string, gatewayPort 
 		newState.ClientGateway = r.ClientGateway
 		newState.LeaseExpires = r.LeaseExpires
 	} else if action == "release" {
-		newState.State = "released"
+		newState.State = "disconnected"
 	}
 	return
 }
@@ -329,8 +331,20 @@ func ClientMain() {
 	if viper.GetBool("UseConfig") {
 		viper.SetConfigType("yaml")
 		viper.SetConfigName("client")
-		// Read the configuration from stdin. Used on openwrt.
+		// Read the configuration from stdin.
 		err := viper.ReadConfig(os.Stdin)
+		if err != nil {
+			Fatal(err)
+		}
+	} else if viper.GetBool("UseUCI") {
+		viper.SetConfigType("yaml")
+		viper.SetConfigName("client")
+		// Read the configuration by executing `autoygguci get`. Used on openwrt.
+		out, err := command(viper.GetString("Shell"), viper.GetString("ShellCommandArg"), "autoygguci get").Output()
+		if err != nil {
+			Fatal(err)
+		}
+		err = viper.ReadConfig(bytes.NewBuffer(out))
 		if err != nil {
 			Fatal(err)
 		}
@@ -348,6 +362,22 @@ func ClientMain() {
 		os.Exit(0)
 	}
 
+	var err error
+	var State state
+	State, err = loadState(State)
+	if err != nil {
+		Fatal(err)
+	}
+
+	if viper.GetBool("State") {
+		json, err := json.MarshalIndent(State, "", "  ")
+		if err != nil {
+			log.Fatal(err)
+		}
+		fmt.Printf("%s\n", json)
+		os.Exit(0)
+	}
+
 	if viper.GetString("GatewayHost") == "" || viper.GetString("Action") == "" {
 		clientUsage(fs)
 		os.Exit(0)
@@ -357,17 +387,10 @@ func ClientMain() {
 		debug = debugLog.Printf
 	}
 
-	var err error
-	var State state
-	State, err = loadState(State)
-	if err != nil {
-		Fatal(err)
-	}
-
 	if viper.GetString("Action") == "register" {
-		State.DesiredState = "active"
+		State.DesiredState = "connected"
 	} else if viper.GetString("Action") == "release" {
-		State.DesiredState = "released"
+		State.DesiredState = "disconnected"
 		State, err = clientTearDownRoutes(State.ClientIP, State.ClientNetMask, State.ClientGateway, State.GatewayPublicKey, State)
 		if err != nil {
 			Fatal(err)

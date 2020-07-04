@@ -517,7 +517,10 @@ func dumpConfiguration(app string) (config string) {
 	delete(configMap, "help")       // do not include the "help" flag in the config dump
 	delete(configMap, "dumpconfig") // do not include the "dumpconfig" flag in the config dump
 	if app == "client" {
-		delete(configMap, "complete") // do not include the "complete" flag in the config dump
+		delete(configMap, "complete")  // do not include the "complete" flag in the config dump
+		delete(configMap, "state")     // do not include the "state" flag in the config dump
+		delete(configMap, "useconfig") // do not include the "useconfig" flag in the config dump
+		delete(configMap, "useuci")    // do not include the "useuci" flag in the config dump
 	}
 
 	var b []byte
