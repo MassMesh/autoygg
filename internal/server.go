@@ -371,14 +371,20 @@ func setupRouter(db *gorm.DB) (r *gin.Engine) {
 		handleError(err, false)
 	}
 
-	// Define routes for unauthenticated requests
 	noAuth := r.Group("/")
 	{
+		// 'info' is special, it's the only request does not return a 'registation' struct
 		noAuth.GET("/info", func(c *gin.Context) {
 			res := info{
-				GatewayOwner:         viper.GetString("GatewayOwner"),
-				Description:          viper.GetString("GatewayDescription"),
-				RegistrationRequired: viper.GetBool("RequireRegistration"),
+				GatewayOwner:        viper.GetString("GatewayOwner"),
+				Description:         viper.GetString("GatewayDescription"),
+				Network:             viper.GetString("GatewayNetwork"),
+				Location:            viper.GetString("GatewayLocation"),
+				GatewayInfoURL:      viper.GetString("GatewayInfoURL"),
+				RequireRegistration: viper.GetBool("RequireRegistration"),
+				RequireApproval:     viper.GetBool("RequireApproval"),
+				AccessListEnabled:   viper.GetBool("AccessListEnabled"),
+				SoftwareVersion:     version,
 			}
 			c.JSON(http.StatusOK, res)
 		})
@@ -417,7 +423,10 @@ func serverLoadConfigDefaults() {
 	viper.SetDefault("ListenHost", "::1")
 	viper.SetDefault("ListenPort", "8080")
 	viper.SetDefault("GatewayOwner", "Some One <someone@example.com>")
-	viper.SetDefault("GatewayDescription", "This is an Yggdrasil gateway operated for fun.")
+	viper.SetDefault("GatewayDescription", "This is an Yggdrasil internet gateway")
+	viper.SetDefault("GatewayNetwork", "Name of the egress network or ISP")
+	viper.SetDefault("GatewayLocation", "Physical location of the gateway")
+	viper.SetDefault("GatewayInfoURL", "")
 	viper.SetDefault("RequireRegistration", true)
 	viper.SetDefault("RequireApproval", true)
 	viper.SetDefault("MaxClients", 10)
@@ -430,6 +439,7 @@ func serverLoadConfigDefaults() {
 	viper.SetDefault("AccessListFile", "accesslist") // Name of the file that contains the accesslist. Omit .yaml extension.
 	viper.SetDefault("YggdrasilInterface", "tun0")   // Name of the yggdrasil tunnel interface
 	viper.SetDefault("Debug", false)
+	viper.SetDefault("Version", false)
 	gatewayPublicKey, err := getSelfPublicKey()
 	if err != nil {
 		incErrorCount("yggdrasil")
@@ -673,6 +683,11 @@ func ServerMain() {
 
 	if viper.GetBool("Help") {
 		serverUsage(fs)
+		os.Exit(0)
+	}
+
+	if viper.GetBool("Version") {
+		fmt.Println(version)
 		os.Exit(0)
 	}
 

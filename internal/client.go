@@ -53,8 +53,9 @@ Options:
 	fmt.Fprintln(os.Stderr, "")
 }
 
-func doPostRequest(fs *flag.FlagSet, action string, gatewayHost string, gatewayPort string) (response []byte) {
+func doRequestWorker(fs *flag.FlagSet, verb string, action string, gatewayHost string, gatewayPort string) (response []byte) {
 	validActions := map[string]bool{
+		"info":     true,
 		"register": true,
 		"renew":    true,
 		"release":  true,
@@ -74,7 +75,12 @@ func doPostRequest(fs *flag.FlagSet, action string, gatewayHost string, gatewayP
 		Fatal(err)
 	}
 
-	resp, err := http.Post("http://["+gatewayHost+"]:"+gatewayPort+"/"+action, "application/json", bytes.NewBuffer(req))
+	var resp *http.Response
+	if verb == "post" {
+		resp, err = http.Post("http://["+gatewayHost+"]:"+gatewayPort+"/"+action, "application/json", bytes.NewBuffer(req))
+	} else {
+		resp, err = http.Get("http://[" + gatewayHost + "]:" + gatewayPort + "/" + action)
+	}
 	if err != nil {
 		clientUsage(fs)
 		Fatal(err)
@@ -234,6 +240,7 @@ func clientCreateFlagSet() (fs *flag.FlagSet) {
 	fs.Bool("useUCI", false, "read configuration by executing 'autoygguci get'")
 	fs.Bool("state", false, "print current state in json format")
 	fs.Bool("help", false, "print usage and exit")
+	fs.Bool("version", false, "print version and exit")
 
 	err := fs.Parse(os.Args[1:])
 	if err != nil {
@@ -255,10 +262,27 @@ func renewLease(fs *flag.FlagSet, State state) (newState state) {
 	return
 }
 
+func doInfoRequest(fs *flag.FlagSet, gatewayHost string, gatewayPort string) (i info, err error) {
+	resp, err := http.Get("http://[" + gatewayHost + "]:" + gatewayPort + "/info")
+	if err != nil {
+		clientUsage(fs)
+		Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	response, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		Fatal(err)
+	}
+
+	err = json.Unmarshal(response, &i)
+	return
+}
+
 func doRequest(fs *flag.FlagSet, action string, gatewayHost string, gatewayPort string, State state) (r registration, newState state, err error) {
 	newState = State
 	log.Printf("Sending `" + action + "` request to autoygg")
-	response := doPostRequest(fs, action, gatewayHost, gatewayPort)
+	response := doRequestWorker(fs, "post", action, gatewayHost, gatewayPort)
 	debug("Raw server response:\n\n%s\n\n", string(response))
 	err = json.Unmarshal(response, &r)
 	handleError(err, false)
@@ -357,6 +381,11 @@ func ClientMain() {
 		os.Exit(0)
 	}
 
+	if viper.GetBool("Version") {
+		fmt.Println(version)
+		os.Exit(0)
+	}
+
 	if viper.GetBool("DumpConfig") {
 		fmt.Print(dumpConfiguration("client"))
 		os.Exit(0)
@@ -397,11 +426,25 @@ func ClientMain() {
 		}
 	}
 
-	r, State, err := doRequest(fs, viper.GetString("Action"), viper.GetString("GatewayHost"), viper.GetString("GatewayPort"), State)
-	if r.Error != "" {
-		State.Error = r.Error
-		_ = saveState(State)
-		Fatal(r.Error)
+	var r registration
+	if viper.GetString("Action") != "info" {
+		r, State, err = doRequest(fs, viper.GetString("Action"), viper.GetString("GatewayHost"), viper.GetString("GatewayPort"), State)
+		if r.Error != "" {
+			State.Error = r.Error
+			_ = saveState(State)
+			Fatal(r.Error)
+		}
+	} else {
+		i, err := doInfoRequest(fs, viper.GetString("GatewayHost"), viper.GetString("GatewayPort"))
+		if err != nil {
+			Fatal(err)
+		}
+		json, err := json.MarshalIndent(i, "", "  ")
+		if err != nil {
+			Fatal(err)
+		}
+		fmt.Printf("%s\n", json)
+		os.Exit(0)
 	}
 	if err != nil {
 		State.Error = err.Error()

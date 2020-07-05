@@ -23,6 +23,7 @@ var (
 	// Set up a *log.Logger for debug output
 	debugLog         = log.New(os.Stderr, "DEBUG: ", log.LstdFlags)
 	enablePrometheus bool
+	version          = "dev"
 )
 
 type logWriter struct {
@@ -43,9 +44,15 @@ func (writer logWriter) Write(bytes []byte) (int, error) {
 }
 
 type info struct {
-	GatewayOwner         string
-	Description          string
-	RegistrationRequired bool
+	GatewayOwner        string
+	Description         string
+	Network             string
+	Location            string
+	GatewayInfoURL      string
+	SoftwareVersion     string
+	RequireRegistration bool
+	RequireApproval     bool
+	AccessListEnabled   bool
 }
 
 // State:
@@ -516,6 +523,7 @@ func dumpConfiguration(app string) (config string) {
 	configMap := viper.AllSettings()
 	delete(configMap, "help")       // do not include the "help" flag in the config dump
 	delete(configMap, "dumpconfig") // do not include the "dumpconfig" flag in the config dump
+	delete(configMap, "version")    // do not include the "version" flag in the config dump
 	if app == "client" {
 		delete(configMap, "complete")  // do not include the "complete" flag in the config dump
 		delete(configMap, "state")     // do not include the "state" flag in the config dump
@@ -563,4 +571,5 @@ func viperLoadSharedDefaults() {
 	viper.SetDefault("GatewayDelRemoteSubnetCommand", "yggdrasilctl removeremotesubnet subnet=%%Subnet%% box_pub_key=%%ClientPublicKey%%")
 	viper.SetDefault("AddDefaultGatewayCommand", "ip ro add default via %%ClientGateway%%")
 	viper.SetDefault("DelDefaultGatewayCommand", "ip ro del default via %%ClientGateway%%")
+	viper.SetDefault("Version", false)
 }
