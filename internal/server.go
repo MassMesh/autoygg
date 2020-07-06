@@ -500,6 +500,7 @@ func serverLoadConfig(path string) (fs *flag.FlagSet) {
 	fs.Usage = func() { serverUsage(fs) }
 	fs.Bool("dumpConfig", false, "dump the configuration that would be used by autoygg-server and exit")
 	fs.Bool("help", false, "print usage and exit")
+	fs.Bool("version", false, "print version and exit")
 
 	err = fs.Parse(os.Args[1:])
 	if err != nil {

@@ -1,7 +1,7 @@
 # Calculate version: if this is a clean checkout, then use the first tag if there is one, otherwise the commit hash. If this is a modified checkout, use the word 'dev'
-+commit = $(shell git log -1 --pretty=format:"%H")
-+tag = $(shell git tag --points-at $(commit))
-+version = $(shell if `git diff --quiet`; then if [ "$(tag)" != "" ]; then echo "$(tag)"; else echo "$(commit)"; fi; else echo 'dev'; fi)
+commit = $(shell git log -1 --pretty=format:"%H" 2>/dev/null)
+tag = $(shell git tag --points-at $(commit) 2>/dev/null)
+version = $(shell if `git diff --quiet 2>/dev/null`; then if [ "$(tag)" != "" ]; then echo "$(tag)"; else echo "$(commit)"; fi; else echo 'dev'; fi)
 
 all: amd64 rpi3 rpi4
 
