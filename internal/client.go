@@ -70,6 +70,9 @@ func doRequestWorker(fs *flag.FlagSet, verb string, action string, gatewayHost s
 	if err != nil {
 		Fatal(err)
 	}
+	r.ClientName = viper.GetString("clientname")
+	r.ClientEmail = viper.GetString("clientemail")
+	r.ClientPhone = viper.GetString("clientphone")
 	req, err := json.Marshal(r)
 	if err != nil {
 		Fatal(err)
@@ -231,6 +234,9 @@ func clientCreateFlagSet() (fs *flag.FlagSet) {
 	fs.String("defaultGatewayDev", "", "LAN default gateway device (autodiscovered by default)")
 	fs.String("yggdrasilInterface", "tun0", "Yggdrasil tunnel interface")
 	fs.String("action", "register", "action (register/renew/release)")
+	fs.String("clientName", "", "your name (optional)")
+	fs.String("clientEmail", "", "your e-mail (optional)")
+	fs.String("clientPhone", "", "your phone number (optional)")
 	fs.Bool("debug", false, "debug output")
 	fs.Bool("quiet", false, "suppress non-error output")
 	fs.Bool("dumpConfig", false, "dump the configuration that would be used by autoygg-client and exit")

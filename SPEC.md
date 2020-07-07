@@ -23,25 +23,27 @@ Example Config
 Registration Model
 
     type registration struct {
-    	gorm.Model
-    	YggIP            string // Client Yggdrasil IP address
-    	PublicKey        string // Client Yggdrasil PublicKey
-    	ClientInfo       string // Registration info?
-    	Error            string
-    	Approved         Bool
+      gorm.Model
+      YggIP            string // Client Yggdrasil IP address
+      PublicKey        string // Client Yggdrasil PublicKey
+      ClientName       string // Registration name (optional)
+      ClientEmail      string // Registration email (optional)
+      ClientPhone      string // Registration phone (optional)
+      Error            string
+      Approved         Bool
     }
 
 Lease Model
 
     type lease struct {
-    	gorm.Model
-    	YggIP            string // Client Yggdrasil IP address
-    	PublicKey        string // Client Yggdrasil PublicKey
-    	GatewayPublicKey string
-    	ClientIP         string // The tunnel IP address assigned to the client
-    	ClientNetMask    int    // The tunnel netmask
-    	ClientGateway    string
-    	LeaseExpires     time.Time
+      gorm.Model
+      YggIP            string // Client Yggdrasil IP address
+      PublicKey        string // Client Yggdrasil PublicKey
+      GatewayPublicKey string
+      ClientIP         string // The tunnel IP address assigned to the client
+      ClientNetMask    int    // The tunnel netmask
+      ClientGateway    string
+      LeaseExpires     time.Time
     }
 
 ACL Model

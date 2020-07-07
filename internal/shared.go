@@ -70,7 +70,9 @@ type registration struct {
 	ClientIP         string // The tunnel IP address assigned to the client
 	ClientNetMask    int    // The tunnel netmask
 	ClientGateway    string
-	ClientInfo       string
+	ClientName       string // Registration name (optional)
+	ClientEmail      string // Registration email (optional)
+	ClientPhone      string // Registration phone (optional)
 	LeaseExpires     time.Time
 	Error            string
 }
@@ -540,6 +542,9 @@ func dumpConfiguration(app string) (config string) {
 		minimalConfigMap["gatewayport"] = configMap["gatewayport"]
 		minimalConfigMap["yggdrasilinterface"] = configMap["yggdrasilinterface"]
 		minimalConfigMap["daemon"] = configMap["daemon"]
+		minimalConfigMap["clientname"] = configMap["clientname"]
+		minimalConfigMap["clientemail"] = configMap["clientemail"]
+		minimalConfigMap["clientphone"] = configMap["clientphone"]
 		configMap = minimalConfigMap
 	}
 	if viper.GetBool("Json") {
