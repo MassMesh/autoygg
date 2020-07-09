@@ -10,6 +10,7 @@ require (
 	github.com/spf13/viper v1.5.0
 	github.com/yggdrasil-network/yggdrasil-go v0.3.14
 	github.com/zsais/go-gin-prometheus v0.1.0
+	gopkg.in/check.v1 v1.0.0-20180628173108-788fd7840127
 	gopkg.in/yaml.v2 v2.2.4
 )
 

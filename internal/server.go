@@ -468,7 +468,6 @@ func serverLoadConfig(path string) (fs *flag.FlagSet) {
 	viper.SetConfigType("yaml")
 	viper.SetConfigName(config)
 	if path == "" {
-		viper.AddConfigPath(path)
 		viper.AddConfigPath("/etc/autoygg/")
 		viper.AddConfigPath("$HOME/.autoygg")
 		viper.AddConfigPath(".")
