@@ -1,13 +1,16 @@
 package internal
 
 import (
-	"github.com/spf13/viper"
+	"context"
 
 	"io/ioutil"
+	"net/http"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
+	"github.com/spf13/viper"
 	"gopkg.in/check.v1"
 )
 
@@ -20,8 +23,14 @@ var _ = check.Suite(&Suite{})
 type Suite struct{}
 
 var serverConfigDir string
+var srv *http.Server
 
 func StopServer(c *check.C) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := srv.Shutdown(ctx); err != nil {
+		c.Fatal("Server forced to shutdown:", err)
+	}
 }
 
 func StartServer(c *check.C) {
@@ -31,9 +40,13 @@ func StartServer(c *check.C) {
 	defer db.Close()
 	r := setupRouter(db)
 
+	srv = &http.Server{
+		Addr:    "[" + viper.GetString("ListenHost") + "]:" + viper.GetString("ListenPort"),
+		Handler: r,
+	}
+
 	go func() {
-		err := r.Run("[" + viper.GetString("ListenHost") + "]:" + viper.GetString("ListenPort"))
-		if err != nil {
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			c.Fatal(err)
 		}
 	}()
@@ -105,5 +118,13 @@ func (*Suite) TestInfoCall(c *check.C) {
 	i, err := doInfoRequest(fs, "::1", "61234")
 
 	c.Assert(err, check.Equals, nil)
-	c.Assert(i.GatewayOwner, check.Equals, "Some One <someone@example.com>")
+	c.Check(i.GatewayOwner, check.Equals, "Some One <someone@example.com>")
+	c.Check(i.Description, check.Equals, "This is an Yggdrasil internet gateway")
+	c.Check(i.Network, check.Equals, "Name of the egress network or ISP")
+	c.Check(i.Location, check.Equals, "Physical location of the gateway")
+	c.Check(i.GatewayInfoURL, check.Equals, "")
+	c.Check(i.SoftwareVersion, check.Equals, "dev")
+	c.Check(i.RequireRegistration, check.Equals, true)
+	c.Check(i.RequireApproval, check.Equals, true)
+	c.Check(i.AccessListEnabled, check.Equals, true)
 }
