@@ -43,6 +43,26 @@ type yggPeerRoute struct {
 	DefaultGatewayDevice string `json:"defaultgatewaydevice"`
 }
 
+type errorOutput struct {
+	Error string `json:"error"`
+}
+
+func logAndExit(message string, exitcode int) {
+	Output := errorOutput{
+		Error: message,
+	}
+	text := "Error: " + message + "\n"
+	if viper.GetBool("Json") {
+		tmp, err := json.Marshal(Output)
+		if err != nil {
+			Fatal(err)
+		}
+		text = string(tmp)
+	}
+	fmt.Println(text)
+	os.Exit(exitcode)
+}
+
 func clientUsage(fs *flag.FlagSet) {
 	fmt.Fprintf(os.Stderr, `
 autoygg-client is a tool to register an Yggdrasil node with a gateway for internet egress.
@@ -271,14 +291,13 @@ func renewLease(fs *flag.FlagSet, State state) (newState state) {
 func doInfoRequest(fs *flag.FlagSet, gatewayHost string, gatewayPort string) (i info, err error) {
 	resp, err := http.Get("http://[" + gatewayHost + "]:" + gatewayPort + "/info")
 	if err != nil {
-		clientUsage(fs)
-		Fatal(err)
+		return
 	}
 	defer resp.Body.Close()
 
 	response, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
-		Fatal(err)
+		return
 	}
 
 	err = json.Unmarshal(response, &i)
@@ -382,6 +401,11 @@ func ClientMain() {
 		clientLoadConfig("")
 	}
 
+	if viper.GetBool("State") || viper.GetString("Action") == "info" {
+		// These arguments imply json output
+		viper.Set("Json", true)
+	}
+
 	if viper.GetBool("Help") {
 		clientUsage(fs)
 		os.Exit(0)
@@ -407,15 +431,18 @@ func ClientMain() {
 	if viper.GetBool("State") {
 		json, err := json.MarshalIndent(State, "", "  ")
 		if err != nil {
-			log.Fatal(err)
+			logAndExit(fmt.Sprintf("Error: %s", err), 1)
 		}
 		fmt.Printf("%s\n", json)
 		os.Exit(0)
 	}
 
-	if viper.GetString("GatewayHost") == "" || viper.GetString("Action") == "" {
-		clientUsage(fs)
-		os.Exit(0)
+	if viper.GetString("GatewayHost") == "" {
+		logAndExit("GatewayHost is not defined", 0)
+	}
+
+	if viper.GetString("Action") == "" {
+		logAndExit("Action is not defined", 0)
 	}
 
 	if viper.GetBool("Debug") {
