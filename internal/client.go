@@ -289,7 +289,15 @@ func renewLease(fs *flag.FlagSet, State state) (newState state) {
 }
 
 func doInfoRequest(fs *flag.FlagSet, gatewayHost string, gatewayPort string) (i info, err error) {
-	resp, err := http.Get("http://[" + gatewayHost + "]:" + gatewayPort + "/info")
+	client := http.Client{
+		Transport: &http.Transport{
+			Dial: (&net.Dialer{
+				Timeout: 200 * time.Millisecond,
+			}).Dial,
+		},
+	}
+
+	resp, err := client.Get("http://[" + gatewayHost + "]:" + gatewayPort + "/info")
 	if err != nil {
 		return
 	}
@@ -470,7 +478,11 @@ func ClientMain() {
 	} else {
 		i, err := doInfoRequest(fs, viper.GetString("GatewayHost"), viper.GetString("GatewayPort"))
 		if err != nil {
-			Fatal(err)
+			if os.IsTimeout(err) {
+				logAndExit(fmt.Sprintf("Timeout: could not connect to gateway at %s", viper.GetString("GatewayHost")), 1)
+			} else {
+				Fatal(err)
+			}
 		}
 		json, err := json.MarshalIndent(i, "", "  ")
 		if err != nil {
