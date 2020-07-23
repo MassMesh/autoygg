@@ -7,9 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/robfig/cron/v3"
-	flag "github.com/spf13/pflag"
-	"github.com/spf13/viper"
 	"io/ioutil"
 	"log"
 	"net"
@@ -20,6 +17,11 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/jpillora/backoff"
+	"github.com/robfig/cron/v3"
+	flag "github.com/spf13/pflag"
+	"github.com/spf13/viper"
 )
 
 type state struct {
@@ -73,29 +75,27 @@ Options:
 	fmt.Fprintln(os.Stderr, "")
 }
 
-func doRequestWorker(fs *flag.FlagSet, verb string, action string, gatewayHost string, gatewayPort string) (response []byte) {
+func doRequestWorker(fs *flag.FlagSet, verb string, action string, gatewayHost string, gatewayPort string) (response []byte, err error) {
 	validActions := map[string]bool{
-		"info":     true,
 		"register": true,
 		"renew":    true,
 		"release":  true,
 	}
 	if !validActions[action] {
-		clientUsage(fs)
-		Fatal("Invalid action: " + action)
+		err = errors.New("Invalid action: " + action)
+		return
 	}
 	var r registration
-	var err error
 	r.PublicKey, err = getSelfPublicKey()
 	if err != nil {
-		Fatal(err)
+		return
 	}
 	r.ClientName = viper.GetString("clientname")
 	r.ClientEmail = viper.GetString("clientemail")
 	r.ClientPhone = viper.GetString("clientphone")
 	req, err := json.Marshal(r)
 	if err != nil {
-		Fatal(err)
+		return
 	}
 
 	var resp *http.Response
@@ -105,14 +105,13 @@ func doRequestWorker(fs *flag.FlagSet, verb string, action string, gatewayHost s
 		resp, err = http.Get("http://[" + gatewayHost + "]:" + gatewayPort + "/" + action)
 	}
 	if err != nil {
-		clientUsage(fs)
-		Fatal(err)
+		return
 	}
 	defer resp.Body.Close()
 
 	response, err = ioutil.ReadAll(resp.Body)
 	if err != nil {
-		Fatal(err)
+		return
 	}
 
 	return
@@ -315,16 +314,17 @@ func doInfoRequest(fs *flag.FlagSet, gatewayHost string, gatewayPort string) (i 
 func doRequest(fs *flag.FlagSet, action string, gatewayHost string, gatewayPort string, State state) (r registration, newState state, err error) {
 	newState = State
 	log.Printf("Sending `" + action + "` request to autoygg")
-	response := doRequestWorker(fs, "post", action, gatewayHost, gatewayPort)
+	response, err := doRequestWorker(fs, "post", action, gatewayHost, gatewayPort)
+	if err != nil {
+		handleError(err, false)
+		return
+	}
 	debug("Raw server response:\n\n%s\n\n", string(response))
 	err = json.Unmarshal(response, &r)
 	handleError(err, false)
 	if err != nil {
-		if viper.GetString("Action") == "release" {
+		if viper.GetString("Action") != "release" {
 			// Do not abort when we are trying to release a lease
-			// FIXME
-			fmt.Println(err)
-		} else {
 			return
 		}
 	}
@@ -379,11 +379,8 @@ func saveState(State state) (err error) {
 	return
 }
 
-// ClientMain is the main() function for the client program
-func ClientMain() {
-	setupLogWriters()
-
-	fs := clientCreateFlagSet()
+func clientValidateConfig() (fs *flag.FlagSet) {
+	fs = clientCreateFlagSet()
 
 	if viper.GetBool("UseConfig") {
 		viper.SetConfigType("yaml")
@@ -409,6 +406,10 @@ func ClientMain() {
 		clientLoadConfig("")
 	}
 
+	if viper.GetBool("Debug") {
+		debug = debugLog.Printf
+	}
+
 	if viper.GetBool("State") || viper.GetString("Action") == "info" {
 		// These arguments imply json output
 		viper.Set("Json", true)
@@ -429,11 +430,37 @@ func ClientMain() {
 		os.Exit(0)
 	}
 
+	return
+}
+
+func handleInfo(fs *flag.FlagSet) {
+	i, err := doInfoRequest(fs, viper.GetString("GatewayHost"), viper.GetString("GatewayPort"))
+	if err != nil {
+		if os.IsTimeout(err) {
+			logAndExit(fmt.Sprintf("Timeout: could not connect to gateway at %s", viper.GetString("GatewayHost")), 1)
+		} else {
+			logAndExit(err.Error(), 1)
+		}
+	}
+	json, err := json.MarshalIndent(i, "", "  ")
+	if err != nil {
+		logAndExit(err.Error(), 1)
+	}
+	fmt.Printf("%s\n", json)
+	os.Exit(0)
+}
+
+// ClientMain is the main() function for the client program
+func ClientMain() {
+	setupLogWriters()
+
+	fs := clientValidateConfig()
+
 	var err error
 	var State state
 	State, err = loadState(State)
 	if err != nil {
-		Fatal(err)
+		logAndExit(err.Error(), 1)
 	}
 
 	if viper.GetBool("State") {
@@ -453,11 +480,9 @@ func ClientMain() {
 		logAndExit("Action is not defined", 0)
 	}
 
-	if viper.GetBool("Debug") {
-		debug = debugLog.Printf
-	}
-
-	if viper.GetString("Action") == "register" {
+	if viper.GetString("Action") == "info" {
+		handleInfo(fs)
+	} else if viper.GetString("Action") == "register" {
 		State.DesiredState = "connected"
 	} else if viper.GetString("Action") == "release" {
 		State.DesiredState = "disconnected"
@@ -467,34 +492,33 @@ func ClientMain() {
 		}
 	}
 
+	b := &backoff.Backoff{
+		Min:    100 * time.Millisecond,
+		Max:    10 * time.Second,
+		Factor: 2,
+		Jitter: true,
+	}
 	var r registration
-	if viper.GetString("Action") != "info" {
+	for {
 		r, State, err = doRequest(fs, viper.GetString("Action"), viper.GetString("GatewayHost"), viper.GetString("GatewayPort"), State)
-		if r.Error != "" {
-			State.Error = r.Error
-			_ = saveState(State)
-			Fatal(r.Error)
+		if err != nil && viper.GetBool("Daemon") {
+			d := b.Duration()
+			time.Sleep(d)
+			continue
+		} else {
+			break
 		}
-	} else {
-		i, err := doInfoRequest(fs, viper.GetString("GatewayHost"), viper.GetString("GatewayPort"))
-		if err != nil {
-			if os.IsTimeout(err) {
-				logAndExit(fmt.Sprintf("Timeout: could not connect to gateway at %s", viper.GetString("GatewayHost")), 1)
-			} else {
-				Fatal(err)
-			}
-		}
-		json, err := json.MarshalIndent(i, "", "  ")
-		if err != nil {
-			Fatal(err)
-		}
-		fmt.Printf("%s\n", json)
-		os.Exit(0)
+	}
+
+	if r.Error != "" {
+		State.Error = r.Error
+		_ = saveState(State)
+		logAndExit(r.Error, 1)
 	}
 	if err != nil {
 		State.Error = err.Error()
 		_ = saveState(State)
-		Fatal(err)
+		logAndExit(err.Error(), 1)
 	}
 
 	if viper.GetString("Action") == "register" {

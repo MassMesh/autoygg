@@ -206,7 +206,7 @@ func (*Suite) TestRegistration(c *check.C) {
 	c.Assert(r.Error, check.Equals, "Registration not found")
 
 	// Renew non-existent lease
-	r, State, err = doRequest(fs, "renew", YggAddress, GatewayPort, State)
+	r, _, err = doRequest(fs, "renew", YggAddress, GatewayPort, State)
 	c.Assert(err, check.Equals, nil)
 	c.Assert(r.Error, check.Equals, "Registration not found")
 
