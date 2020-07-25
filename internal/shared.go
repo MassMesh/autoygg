@@ -230,16 +230,23 @@ func peerRouteWorker(action string, peer string, defaultGatewayIP string, defaul
 
 // addDefaultGateway adds a default route.
 func addDefaultGateway(clientGateway string) error {
-	return defaultGatewayWorker("Add", clientGateway)
+	return defaultGatewayWorker(clientGateway)
 }
 
 // removeDefaultGateway removes a default route.
 func removeDefaultGateway(clientGateway string) error {
-	return defaultGatewayWorker("Del", clientGateway)
+	return defaultGatewayWorker(clientGateway)
 }
 
-func defaultGatewayWorker(action string, clientGateway string) (err error) {
-	cmd := viper.GetString(action + "DefaultGatewayCommand")
+func defaultGatewayWorker(clientGateway string) (err error) {
+	var cmd string
+	if clientGateway != "0.0.0.0" {
+		cmd = viper.GetString("DefaultGatewayCommand")
+	} else {
+		// We're removing the default gateway that we installed, and there was no
+		// default gateway originally, so we restore that situation.
+		cmd = viper.GetString("DelDefaultGatewayCommand")
+	}
 	cmd = strings.Replace(cmd, "%%ClientGateway%%", clientGateway, -1)
 
 	_, err = command(viper.GetString("Shell"), viper.GetString("ShellCommandArg"), cmd).Output()
@@ -574,7 +581,7 @@ func viperLoadSharedDefaults() {
 	viper.SetDefault("DelPeerNullRouteCommand", "ip ro del blackhole %%Peer%% metric 500")
 	viper.SetDefault("GatewayAddRemoteSubnetCommand", "yggdrasilctl addremotesubnet subnet=%%Subnet%% box_pub_key=%%ClientPublicKey%%")
 	viper.SetDefault("GatewayDelRemoteSubnetCommand", "yggdrasilctl removeremotesubnet subnet=%%Subnet%% box_pub_key=%%ClientPublicKey%%")
-	viper.SetDefault("AddDefaultGatewayCommand", "ip ro add default via %%ClientGateway%%")
-	viper.SetDefault("DelDefaultGatewayCommand", "ip ro del default via %%ClientGateway%%")
+	viper.SetDefault("DefaultGatewayCommand", "ip ro replace default via %%ClientGateway%%")
+	viper.SetDefault("DelDefaultGatewayCommand", "ip ro del default")
 	viper.SetDefault("Version", false)
 }

@@ -25,24 +25,26 @@ import (
 )
 
 type state struct {
-	State              string                  `json:"state"`
-	DesiredState       string                  `json:"desiredstate"`
-	Error              string                  `json:"error"`
-	GatewayHost        string                  `json:"gatewayhost"`
-	GatewayPort        string                  `json:"gatewayport"`
-	GatewayPublicKey   string                  `json:"gatewaypublickey"`
-	YggdrasilInterface string                  `json:"yggdrasilinterface"`
-	ClientIP           string                  `json:"clientip"`
-	ClientNetMask      int                     `json:"clientnetmask"`
-	ClientGateway      string                  `json:"clientgateway"`
-	LeaseExpires       time.Time               `json:"leaseexpires"`
-	TunnelRouting      bool                    `json:"tunnelrouting"`
-	PeerRoutes         map[string]yggPeerRoute `json:"peerroutes"`
+	State                     string                  `json:"state"`
+	DesiredState              string                  `json:"desiredstate"`
+	Error                     string                  `json:"error"`
+	GatewayHost               string                  `json:"gatewayhost"`
+	GatewayPort               string                  `json:"gatewayport"`
+	GatewayPublicKey          string                  `json:"gatewaypublickey"`
+	OriginalDefaultGatewayDev string                  `json:"originaldefaultgatewaydevice"`
+	OriginalDefaultGatewayIP  string                  `json:"originaldefaultgatewayip"`
+	YggdrasilInterface        string                  `json:"yggdrasilinterface"`
+	ClientIP                  string                  `json:"clientip"`
+	ClientNetMask             int                     `json:"clientnetmask"`
+	ClientGateway             string                  `json:"clientgateway"`
+	LeaseExpires              time.Time               `json:"leaseexpires"`
+	TunnelRouting             bool                    `json:"tunnelrouting"`
+	PeerRoutes                map[string]yggPeerRoute `json:"peerroutes"`
 }
 
 type yggPeerRoute struct {
-	DefaultGatewayIP     string `json:"defaultgatewayip"`
-	DefaultGatewayDevice string `json:"defaultgatewaydevice"`
+	DefaultGatewayIP  string `json:"defaultgatewayip"`
+	DefaultGatewayDev string `json:"defaultgatewaydevice"`
 }
 
 type errorOutput struct {
@@ -117,7 +119,7 @@ func doRequestWorker(fs *flag.FlagSet, verb string, action string, gatewayHost s
 	return
 }
 
-func clientSetupRoutes(clientIP string, clientNetMask int, clientGateway string, publicKey string, defaultGatewayIP string, defaultGatewayDevice string, State state) (newState state, err error) {
+func clientSetupRoutes(clientIP string, clientNetMask int, clientGateway string, publicKey string, defaultGatewayIP string, defaultGatewayDev string, State state) (newState state, err error) {
 	newState = State
 	log.Printf("Enabling Yggdrasil tunnel routing")
 	err = enableTunnelRouting()
@@ -126,6 +128,9 @@ func clientSetupRoutes(clientIP string, clientNetMask int, clientGateway string,
 		return
 	}
 	newState.TunnelRouting = true
+
+	newState.OriginalDefaultGatewayDev = defaultGatewayDev
+	newState.OriginalDefaultGatewayIP = defaultGatewayIP
 
 	log.Printf("Adding Yggdrasil local subnet 0.0.0.0/0")
 	err = addLocalSubnet("0.0.0.0/0")
@@ -148,7 +153,7 @@ func clientSetupRoutes(clientIP string, clientNetMask int, clientGateway string,
 		// ip ro add <peer_ip> via <wan_gw> dev <wan_dev>
 		log.Printf("Adding Yggdrasil peer route for %s via %s", p, defaultGatewayIP)
 		var change bool
-		change, err = addPeerRoute(p, defaultGatewayIP, defaultGatewayDevice)
+		change, err = addPeerRoute(p, defaultGatewayIP, defaultGatewayDev)
 		handleError(err, false)
 		if err != nil {
 			// If we can't add a route for all yggdrasil peers, something is really wrong and we should abort.
@@ -159,7 +164,7 @@ func clientSetupRoutes(clientIP string, clientNetMask int, clientGateway string,
 			if newState.PeerRoutes == nil {
 				newState.PeerRoutes = make(map[string]yggPeerRoute)
 			}
-			newState.PeerRoutes[p] = yggPeerRoute{DefaultGatewayIP: defaultGatewayIP, DefaultGatewayDevice: defaultGatewayDevice}
+			newState.PeerRoutes[p] = yggPeerRoute{DefaultGatewayIP: defaultGatewayIP, DefaultGatewayDev: defaultGatewayDev}
 		}
 	}
 
@@ -177,7 +182,7 @@ func clientSetupRoutes(clientIP string, clientNetMask int, clientGateway string,
 func clientTearDownRoutes(clientIP string, clientNetMask int, clientGateway string, publicKey string, State state) (newState state, err error) {
 	newState = State
 	log.Printf("Removing default gateway pointing at %s", clientGateway)
-	err = removeDefaultGateway(clientGateway)
+	err = removeDefaultGateway(State.OriginalDefaultGatewayIP)
 	handleError(err, false)
 
 	// FIXME Instead of getting ygg peers here, use the state object to determine which peer routes to pull
@@ -560,7 +565,7 @@ func ClientMain() {
 		sig := make(chan os.Signal, 1)
 		signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
 		<-sig
-		fmt.Print("\r") // Overwrite any ^C that may have been printed on the screen
+		fmt.Fprint(os.Stderr, "\r") // Overwrite any ^C that may have been printed on the screen
 		State, _ = clientTearDownRoutes(r.ClientIP, r.ClientNetMask, r.ClientGateway, r.GatewayPublicKey, State)
 		_, State, _ = doRequest(fs, "release", viper.GetString("GatewayHost"), viper.GetString("GatewayPort"), State)
 		_ = saveState(State)
