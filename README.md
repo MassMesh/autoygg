@@ -88,7 +88,9 @@ $ yggdrasilctl getSelf
 ```
 ---
 AccessList:
-- 200:1234:5678:9000:0000:0000:0000:0001
+  - yggip: 200:1234:5678:9000:0000:0000:0000:0001
+    access: true
+    comment: node at 124 main street
 ```
 
 Note: the `autoygg-server` program will automatically reload its config files when they change. There is no need to restart it after modifying the main config file or the accesslist.

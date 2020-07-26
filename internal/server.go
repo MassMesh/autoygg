@@ -21,8 +21,14 @@ import (
 )
 
 var (
-	accesslist map[string]bool
+	accesslist map[string]acl
 )
+
+type acl struct {
+	YggIP   string `yaml:"yggip"`
+	Access  bool   `yaml:"access"` // True for allowed, false for denied
+	Comment string `yaml:"comment"`
+}
 
 var errorCount = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
@@ -62,7 +68,7 @@ func registrationAllowed(address string) bool {
 	}
 
 	if viper.GetBool("AccessListEnabled") {
-		if _, found := accesslist[address]; found {
+		if _, found := accesslist[address]; found && accesslist[address].Access {
 			// The address is on the accesslist. Accept.
 			debug("This address is accesslisted, accepted request from %s\n", address)
 			return true
@@ -513,7 +519,7 @@ func serverLoadConfig(path string) (fs *flag.FlagSet) {
 	return
 }
 
-func initializeViperList(name string, path string, list *map[string]bool) {
+func initializeViperList(name string, path string, list *map[string]acl) {
 	if viper.GetBool(name + "Enabled") {
 		// Viper only supports watching one config file at the moment (cf issue #631)
 		// Set up an additional viper for this list
@@ -545,18 +551,28 @@ func initializeViperList(name string, path string, list *map[string]bool) {
 }
 
 // convert the accesslist viper slices into a map for cheap lookup
-func loadList(name string, localViper *viper.Viper) map[string]bool {
-	list := make(map[string]bool)
+func loadList(name string, localViper *viper.Viper) map[string]acl {
+	list := make(map[string]acl)
+	slice := make([]acl, 10)
 	if !viper.GetBool(name + "Enabled") {
 		fmt.Printf("%sEnabled is not set", name)
 		return list
 	}
-	slice := localViper.GetStringSlice(name)
-	for i := 0; i < len(slice); i++ {
-		if ValidYggdrasilAddress(slice[i]) {
-			list[slice[i]] = true
+	err := localViper.UnmarshalKey("accesslist", &slice)
+	if err != nil {
+		Fatal(fmt.Sprintf("while reading config file `%s.yaml`: %s\n", viper.GetString(name+"File"), err.Error()))
+	}
+	for _, v := range slice {
+		if ValidYggdrasilAddress(v.YggIP) {
+			list[v.YggIP] = v
 		} else {
-			fmt.Printf("Warning: %s: skipping invalid address %s\n", name, slice[i])
+			fmt.Printf("Warning: %s: skipping acl %+v with invalid Yggdrasil IP %s\n", name, v, v.YggIP)
+		}
+	}
+
+	if viper.GetBool("Debug") {
+		for k, v := range list {
+			debug("ACCESSLIST AS PARSED: %+v => %+v\n", k, v)
 		}
 	}
 	return list
