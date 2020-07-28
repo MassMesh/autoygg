@@ -446,13 +446,7 @@ func serverLoadConfigDefaults() {
 	viper.SetDefault("YggdrasilInterface", "tun0")   // Name of the yggdrasil tunnel interface
 	viper.SetDefault("Debug", false)
 	viper.SetDefault("Version", false)
-	gatewayPublicKey, err := getSelfPublicKey()
-	if err != nil {
-		incErrorCount("yggdrasil")
-		log.Printf("Error: unable to run yggdrasilctl: %s", err)
-	} else {
-		viper.SetDefault("GatewayPublicKey", gatewayPublicKey)
-	}
+	viper.SetDefault("GatewayPublicKey", "")
 }
 
 func serverLoadConfig(path string) (fs *flag.FlagSet) {
@@ -481,8 +475,37 @@ func serverLoadConfig(path string) (fs *flag.FlagSet) {
 		// For testing
 		viper.AddConfigPath(path)
 	}
-	err = viper.ReadInConfig()
+	configErr := viper.ReadInConfig()
+
+	// First handle command line flags, some of which should not depend on the presence of
+	// a config file
+	fs = flag.NewFlagSet("Autoygg", flag.ContinueOnError)
+	fs.Usage = func() { serverUsage(fs) }
+	fs.Bool("dumpConfig", false, "dump the configuration that would be used by autoygg-server and exit")
+	fs.Bool("help", false, "print usage and exit")
+	fs.Bool("version", false, "print version and exit")
+
+	err = fs.Parse(os.Args[1:])
 	if err != nil {
+		Fatal(err)
+	}
+
+	err = viper.BindPFlags(fs)
+	if err != nil {
+		Fatal(err)
+	}
+
+	if viper.GetBool("Help") {
+		serverUsage(fs)
+		os.Exit(0)
+	}
+
+	if viper.GetBool("Version") {
+		fmt.Println(version)
+		os.Exit(0)
+	}
+
+	if configErr != nil {
 		Fatal(fmt.Sprintln("Fatal error reading config file:", err.Error()))
 	}
 
@@ -501,21 +524,6 @@ func serverLoadConfig(path string) (fs *flag.FlagSet) {
 		debug = debugLog.Printf
 	}
 
-	fs = flag.NewFlagSet("Autoygg", flag.ContinueOnError)
-	fs.Usage = func() { serverUsage(fs) }
-	fs.Bool("dumpConfig", false, "dump the configuration that would be used by autoygg-server and exit")
-	fs.Bool("help", false, "print usage and exit")
-	fs.Bool("version", false, "print version and exit")
-
-	err = fs.Parse(os.Args[1:])
-	if err != nil {
-		Fatal(err)
-	}
-
-	err = viper.BindPFlags(fs)
-	if err != nil {
-		Fatal(err)
-	}
 	return
 }
 
@@ -697,14 +705,19 @@ func ServerMain() {
 
 	fs := serverLoadConfig("")
 
-	if viper.GetBool("Help") {
-		serverUsage(fs)
-		os.Exit(0)
-	}
-
-	if viper.GetBool("Version") {
-		fmt.Println(version)
-		os.Exit(0)
+	// if GatewayPublicKey is not set in the config, calculate it here.
+	// This has the advantage that --help and --version are already handled
+	// at this point, so these calls won't error out if yggdrasil is not
+	// installed or the user doesn't have enough permissions to talk to it.
+	if viper.GetString("GatewayPublicKey") == "" {
+		gatewayPublicKey, err := getSelfPublicKey()
+		if err != nil {
+			incErrorCount("yggdrasil")
+			fmt.Printf("Error: unable to run yggdrasilctl: %s\n", err)
+			os.Exit(1)
+		} else {
+			viper.Set("GatewayPublicKey", gatewayPublicKey)
+		}
 	}
 
 	if viper.GetBool("DumpConfig") {
