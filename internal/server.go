@@ -505,6 +505,10 @@ func serverLoadConfig(path string) (fs *flag.FlagSet) {
 		os.Exit(0)
 	}
 
+	if viper.GetBool("Debug") {
+		debug = debugLog.Printf
+	}
+
 	if configErr != nil {
 		Fatal(fmt.Sprintln("Fatal error reading config file:", err.Error()))
 	}
@@ -520,9 +524,6 @@ func serverLoadConfig(path string) (fs *flag.FlagSet) {
 		}
 		fmt.Println("Config file changed:", e.Name)
 	})
-	if viper.GetBool("Debug") {
-		debug = debugLog.Printf
-	}
 
 	return
 }
@@ -561,7 +562,7 @@ func initializeViperList(name string, path string, list *map[string]acl) {
 // convert the accesslist viper slices into a map for cheap lookup
 func loadList(name string, localViper *viper.Viper) map[string]acl {
 	list := make(map[string]acl)
-	slice := make([]acl, 10)
+	var slice []acl
 	if !viper.GetBool(name + "Enabled") {
 		fmt.Printf("%sEnabled is not set", name)
 		return list
@@ -573,16 +574,12 @@ func loadList(name string, localViper *viper.Viper) map[string]acl {
 	for _, v := range slice {
 		if ValidYggdrasilAddress(v.YggIP) {
 			list[v.YggIP] = v
+			debug("Parsed acl %+v for Yggdrasil IP %s\n", v, v.YggIP)
 		} else {
 			fmt.Printf("Warning: %s: skipping acl %+v with invalid Yggdrasil IP %s\n", name, v, v.YggIP)
 		}
 	}
 
-	if viper.GetBool("Debug") {
-		for k, v := range list {
-			debug("ACCESSLIST AS PARSED: %+v => %+v\n", k, v)
-		}
-	}
 	return list
 }
 
