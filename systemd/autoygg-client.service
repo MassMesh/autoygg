@@ -1,0 +1,20 @@
+[Unit]
+Description=autoygg-client
+Wants=network.target
+Wants=yggdrasil.service
+After=network.target
+After=yggdrasil.service
+
+[Service]
+ProtectHome=true
+ProtectSystem=true
+SyslogIdentifier=autoygg-client
+CapabilityBoundingSet=CAP_NET_ADMIN
+ExecStart=/usr/bin/autoygg-client
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=always
+TimeoutStopSec=5
+
+[Install]
+WantedBy=multi-user.target
+
