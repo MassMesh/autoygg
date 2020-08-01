@@ -181,7 +181,7 @@ func (*Suite) TestRegistration(c *check.C) {
 	c.Assert(r.Error, check.Equals, "Registration not allowed")
 
 	// Changing the access list file will trigger an automatic config reload in the server
-	accessList := []byte("AccessList:\n- " + YggAddress + "\n")
+	accessList := []byte("AccessList:\n  - yggip: " + YggAddress + "\n    access: true\n    comment: TestRegistration\n")
 	accessListFile := filepath.Join(serverConfigDir, "accesslist.yaml")
 	err = ioutil.WriteFile(accessListFile, accessList, 0644)
 	if err != nil {
