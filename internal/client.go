@@ -27,6 +27,7 @@ import (
 type state struct {
 	State                     string                  `json:"state"`
 	DesiredState              string                  `json:"desiredstate"`
+	ClientVersion             string                  `json:"clientversion"`
 	Error                     string                  `json:"error"`
 	GatewayHost               string                  `json:"gatewayhost"`
 	GatewayPort               string                  `json:"gatewayport"`
@@ -85,7 +86,8 @@ func doRequestWorker(fs *flag.FlagSet, verb string, action string, gatewayHost s
 	}
 	if !validActions[action] {
 		err = errors.New("Invalid action: " + action)
-		return
+		// Invalid action is a fatal error, abort here
+		handleError(err, true)
 	}
 	var r registration
 	r.PublicKey, err = getSelfPublicKey()
@@ -95,6 +97,7 @@ func doRequestWorker(fs *flag.FlagSet, verb string, action string, gatewayHost s
 	r.ClientName = viper.GetString("clientname")
 	r.ClientEmail = viper.GetString("clientemail")
 	r.ClientPhone = viper.GetString("clientphone")
+	r.ClientVersion = version
 	req, err := json.Marshal(r)
 	if err != nil {
 		return
@@ -467,6 +470,7 @@ func ClientMain() {
 	if err != nil {
 		logAndExit(err.Error(), 1)
 	}
+	State.ClientVersion = version
 
 	if viper.GetBool("State") {
 		json, err := json.MarshalIndent(State, "", "  ")
@@ -491,6 +495,7 @@ func ClientMain() {
 		State.DesiredState = "connected"
 	} else if viper.GetString("Action") == "release" {
 		State.DesiredState = "disconnected"
+		_ = saveState(State)
 		State, err = clientTearDownRoutes(State.ClientIP, State.ClientNetMask, State.ClientGateway, State.GatewayPublicKey, State)
 		if err != nil {
 			Fatal(err)
@@ -536,6 +541,7 @@ func ClientMain() {
 			}
 			gatewayIP = tmpIP.String()
 			gatewayDev = tmpDev
+			debug("Detected gatewayIP %s via gatewayDev %s\n", gatewayIP, gatewayDev)
 		}
 		State, err = clientSetupRoutes(r.ClientIP, r.ClientNetMask, r.ClientGateway, r.GatewayPublicKey, gatewayIP, gatewayDev, State)
 	}
@@ -566,6 +572,7 @@ func ClientMain() {
 		signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
 		<-sig
 		fmt.Fprint(os.Stderr, "\r") // Overwrite any ^C that may have been printed on the screen
+		State.DesiredState = "disconnected"
 		State, _ = clientTearDownRoutes(r.ClientIP, r.ClientNetMask, r.ClientGateway, r.GatewayPublicKey, State)
 		_, State, _ = doRequest(fs, "release", viper.GetString("GatewayHost"), viper.GetString("GatewayPort"), State)
 		_ = saveState(State)
@@ -629,6 +636,12 @@ func parseLinuxProcNetRoute(YggdrasilInterface string, f []byte) (string, net.IP
 
 		// We want the (original) local gateway, not the Autoygg gateway
 		if tokens[devfield] == YggdrasilInterface {
+			debug("Skipping %s via %s\n", net.IP(ipd32), tokens[devfield])
+			continue
+		}
+		// If there are any routes that are not attached to a specific interface,
+		// like blacklist routes, skip those too
+		if tokens[devfield] == "*" {
 			debug("Skipping %s via %s\n", net.IP(ipd32), tokens[devfield])
 			continue
 		}

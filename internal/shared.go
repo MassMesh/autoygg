@@ -73,6 +73,7 @@ type registration struct {
 	ClientName       string // Registration name (optional)
 	ClientEmail      string // Registration email (optional)
 	ClientPhone      string // Registration phone (optional)
+	ClientVersion    string // Autoygg client software version
 	LeaseExpires     time.Time
 	Error            string
 }
