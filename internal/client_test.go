@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"io/ioutil"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -210,4 +211,14 @@ func (*Suite) TestRegistration(c *check.C) {
 	c.Assert(err, check.Equals, nil)
 	c.Assert(r.Error, check.Equals, "Registration not found")
 
+}
+
+func (*Suite) TestDiscoverLocalGateway(c *check.C) {
+	// This partial route list has a blackhole route followed by a route via ygg0 followed by the lan default route
+	// parseLinuxProcNetRoute must return the lan default route.
+	b := []byte("Iface\tDestination\tGateway\n*\t0A0A0A0A\t00000000\nygg0\t00000000\t01002A0A\nbr-lan\t00000000\t01002A0A\n")
+	gwdev, gwip, err := parseLinuxProcNetRoute("ygg0", b)
+	c.Assert(err, check.IsNil)
+	c.Assert(net.IP(gwip).String(), check.Equals, "10.42.0.1")
+	c.Assert(gwdev, check.Equals, "br-lan")
 }
