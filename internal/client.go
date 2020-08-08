@@ -124,10 +124,13 @@ func doRequestWorker(fs *flag.FlagSet, verb string, action string, gatewayHost s
 
 func clientSetupRoutes(clientIP string, clientNetMask int, clientGateway string, publicKey string, defaultGatewayIP string, defaultGatewayDev string, State state) (newState state, err error) {
 	newState = State
+	newState.Error = ""
 	log.Printf("Enabling Yggdrasil tunnel routing")
 	err = enableTunnelRouting()
 	handleError(err, false)
 	if err != nil {
+		newState.Error += err.Error() + "\n"
+		saveState(State)
 		return
 	}
 	newState.TunnelRouting = true
@@ -138,19 +141,31 @@ func clientSetupRoutes(clientIP string, clientNetMask int, clientGateway string,
 	log.Printf("Adding Yggdrasil local subnet 0.0.0.0/0")
 	err = addLocalSubnet("0.0.0.0/0")
 	handleError(err, false)
+	if err != nil {
+		newState.Error += err.Error() + "\n"
+	}
 
 	log.Printf("Adding tunnel IP %s/%d", clientIP, clientNetMask)
 	err = addTunnelIP(clientIP, clientNetMask)
 	handleError(err, false)
+	if err != nil {
+		newState.Error += err.Error() + "\n"
+	}
 
 	log.Printf("Adding Yggdrasil remote subnet 0.0.0.0/0")
 	err = addRemoteSubnet("0.0.0.0/0", publicKey)
 	handleError(err, false)
+	if err != nil {
+		newState.Error += err.Error() + "\n"
+	}
 
 	// Make sure we route traffic to our Yggdrasil peer(s) to the wan default gateway
 	log.Printf("Getting Yggdrasil peers")
 	peers, err := yggdrasilPeers()
 	handleError(err, false)
+	if err != nil {
+		newState.Error += err.Error() + "\n"
+	}
 
 	for _, p := range peers {
 		// ip ro add <peer_ip> via <wan_gw> dev <wan_dev>
@@ -161,6 +176,8 @@ func clientSetupRoutes(clientIP string, clientNetMask int, clientGateway string,
 		if err != nil {
 			// If we can't add a route for all yggdrasil peers, something is really wrong and we should abort.
 			// Because if we change the default gateway, we will be cutting ourselves off from the internet.
+			newState.Error += err.Error() + "\n"
+			saveState(State)
 			return
 		}
 		if change {
@@ -174,8 +191,12 @@ func clientSetupRoutes(clientIP string, clientNetMask int, clientGateway string,
 	log.Printf("Adding default gateway pointing at %s", clientGateway)
 	err = addDefaultGateway(clientGateway)
 	handleError(err, false)
+	if err != nil {
+		newState.Error += err.Error() + "\n"
+	}
 
 	newState.State = "connected"
+	saveState(State)
 
 	// FIXME TODO:
 	// * replace default route, test connectivity, if fail, rollback?
@@ -184,20 +205,30 @@ func clientSetupRoutes(clientIP string, clientNetMask int, clientGateway string,
 
 func clientTearDownRoutes(clientIP string, clientNetMask int, clientGateway string, publicKey string, State state) (newState state, err error) {
 	newState = State
+	newState.Error = ""
 	log.Printf("Removing default gateway pointing at %s", clientGateway)
 	err = removeDefaultGateway(State.OriginalDefaultGatewayIP)
 	handleError(err, false)
+	if err != nil {
+		newState.Error += err.Error() + "\n"
+	}
 
 	// FIXME Instead of getting ygg peers here, use the state object to determine which peer routes to pull
 	log.Printf("Getting Yggdrasil peers")
 	peers, err := yggdrasilPeers()
 	handleError(err, false)
+	if err != nil {
+		newState.Error += err.Error() + "\n"
+	}
 
 	for _, p := range peers {
 		log.Printf("Removing Yggdrasil peer route for %s", p)
 		var change bool
 		change, err = removePeerRoute(p)
 		handleError(err, false)
+		if err != nil {
+			newState.Error += err.Error() + "\n"
+		}
 		if change {
 			delete(newState.PeerRoutes, p)
 		}
@@ -206,21 +237,33 @@ func clientTearDownRoutes(clientIP string, clientNetMask int, clientGateway stri
 	log.Printf("Removing Yggdrasil remote subnet 0.0.0.0/0")
 	err = removeRemoteSubnet("0.0.0.0/0", publicKey)
 	handleError(err, false)
+	if err != nil {
+		newState.Error += err.Error() + "\n"
+	}
 
 	log.Printf("Removing tunnel IP %s/%d", clientIP, clientNetMask)
 	err = removeTunnelIP(clientIP, clientNetMask)
 	handleError(err, false)
+	if err != nil {
+		newState.Error += err.Error() + "\n"
+	}
 
 	log.Printf("Removing Yggdrasil local subnet 0.0.0.0/0")
 	err = removeLocalSubnet("0.0.0.0/0")
 	handleError(err, false)
+	if err != nil {
+		newState.Error += err.Error() + "\n"
+	}
 
 	log.Printf("Disabling Yggdrasil tunnel routing")
 	err = disableTunnelRouting()
 	handleError(err, false)
 	newState.TunnelRouting = false
 	newState.State = "registered"
-
+	if err != nil {
+		newState.Error += err.Error() + "\n"
+	}
+	saveState(newState)
 	return
 }
 
@@ -331,8 +374,10 @@ func doRequest(fs *flag.FlagSet, action string, gatewayHost string, gatewayPort 
 	err = json.Unmarshal(response, &r)
 	handleError(err, false)
 	if err != nil {
+		// Only abort when we are not trying to release a lease
+		newState.Error = err.Error()
 		if viper.GetString("Action") != "release" {
-			// Do not abort when we are trying to release a lease
+			saveState(newState)
 			return
 		}
 	}
@@ -347,8 +392,12 @@ func doRequest(fs *flag.FlagSet, action string, gatewayHost string, gatewayPort 
 		newState.ClientGateway = r.ClientGateway
 		newState.LeaseExpires = r.LeaseExpires
 	} else if action == "release" {
+		// Errors while releasing can just be ignored from our local state perspective
 		newState.State = "disconnected"
+	} else if r.Error != "" {
+		newState.Error = r.Error
 	}
+	saveState(newState)
 	return
 }
 
@@ -370,21 +419,25 @@ func loadState(origState state) (State state, err error) {
 	return
 }
 
-func saveState(State state) (err error) {
+func saveState(State state) {
 	// FIXME add mutex
 	debug("Saving client state")
 	jsonState, err := json.Marshal(State)
 	if err != nil {
+		debug(err.Error())
 		return
 	}
 
 	path := viper.GetString("StateDir") + "/client-state.json"
 	err = os.MkdirAll(viper.GetString("StateDir"), os.ModePerm)
 	if err != nil {
+		debug(err.Error())
 		return
 	}
 	err = ioutil.WriteFile(path, jsonState, 0644)
-	return
+	if err != nil {
+		debug(err.Error())
+	}
 }
 
 func clientValidateConfig() (fs *flag.FlagSet) {
@@ -495,7 +548,6 @@ func ClientMain() {
 		State.DesiredState = "connected"
 	} else if viper.GetString("Action") == "release" {
 		State.DesiredState = "disconnected"
-		_ = saveState(State)
 		State, err = clientTearDownRoutes(State.ClientIP, State.ClientNetMask, State.ClientGateway, State.GatewayPublicKey, State)
 		if err != nil {
 			Fatal(err)
@@ -521,13 +573,9 @@ func ClientMain() {
 	}
 
 	if r.Error != "" {
-		State.Error = r.Error
-		_ = saveState(State)
 		logAndExit(r.Error, 1)
 	}
 	if err != nil {
-		State.Error = err.Error()
-		_ = saveState(State)
 		logAndExit(err.Error(), 1)
 	}
 
@@ -544,16 +592,9 @@ func ClientMain() {
 			debug("Detected gatewayIP %s via gatewayDev %s\n", gatewayIP, gatewayDev)
 		}
 		State, err = clientSetupRoutes(r.ClientIP, r.ClientNetMask, r.ClientGateway, r.GatewayPublicKey, gatewayIP, gatewayDev, State)
-	}
-	if err != nil {
-		Fatal(err)
-	} else {
-		State.Error = ""
-	}
-
-	err = saveState(State)
-	if err != nil {
-		Fatal(err)
+		if err != nil {
+			Fatal(err)
+		}
 	}
 
 	if viper.GetBool("Daemon") && viper.GetString("Action") == "register" {
@@ -561,7 +602,6 @@ func ClientMain() {
 		c := cron.New()
 		_, err := c.AddFunc("CRON_TZ=UTC */30 * * * *", func() {
 			State = renewLease(fs, State)
-			_ = saveState(State)
 		})
 		handleError(err, false)
 		if err != nil {
@@ -574,8 +614,7 @@ func ClientMain() {
 		fmt.Fprint(os.Stderr, "\r") // Overwrite any ^C that may have been printed on the screen
 		State.DesiredState = "disconnected"
 		State, _ = clientTearDownRoutes(r.ClientIP, r.ClientNetMask, r.ClientGateway, r.GatewayPublicKey, State)
-		_, State, _ = doRequest(fs, "release", viper.GetString("GatewayHost"), viper.GetString("GatewayPort"), State)
-		_ = saveState(State)
+		_, _, _ = doRequest(fs, "release", viper.GetString("GatewayHost"), viper.GetString("GatewayPort"), State)
 	}
 }
 

@@ -193,6 +193,10 @@ func (*Suite) TestRegistration(c *check.C) {
 	c.Assert(err, check.Equals, nil)
 	c.Assert(r.Error, check.Equals, "")
 
+	loadedState, err := loadState(state{})
+	c.Assert(err, check.Equals, nil)
+	c.Assert(loadedState.State, check.Equals, "registered")
+
 	r, State, err = doRequest(fs, "renew", YggAddress, GatewayPort, State)
 	c.Assert(err, check.Equals, nil)
 	c.Assert(r.Error, check.Equals, "")
@@ -200,6 +204,10 @@ func (*Suite) TestRegistration(c *check.C) {
 	r, State, err = doRequest(fs, "release", YggAddress, GatewayPort, State)
 	c.Assert(err, check.Equals, nil)
 	c.Assert(r.Error, check.Equals, "")
+
+	loadedState, err = loadState(state{})
+	c.Assert(err, check.Equals, nil)
+	c.Assert(loadedState.State, check.Equals, "disconnected")
 
 	// Release non-existent lease
 	r, State, err = doRequest(fs, "release", YggAddress, GatewayPort, State)
