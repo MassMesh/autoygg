@@ -213,15 +213,9 @@ func clientTearDownRoutes(clientIP string, clientNetMask int, clientGateway stri
 		newState.Error += err.Error() + "\n"
 	}
 
-	// FIXME Instead of getting ygg peers here, use the state object to determine which peer routes to pull
-	log.Printf("Getting Yggdrasil peers")
-	peers, err := yggdrasilPeers()
-	handleError(err, false)
-	if err != nil {
-		newState.Error += err.Error() + "\n"
-	}
-
-	for _, p := range peers {
+	log.Printf("Getting Yggdrasil peers from state file")
+	handleError(nil, false)
+	for p := range State.PeerRoutes {
 		log.Printf("Removing Yggdrasil peer route for %s", p)
 		var change bool
 		change, err = removePeerRoute(p)
@@ -382,7 +376,8 @@ func doRequest(fs *flag.FlagSet, action string, gatewayHost string, gatewayPort 
 		}
 	}
 	if r.Error == "" && action == "register" {
-		newState.State = "registered"
+		newState.State = "connected"
+		newState.Error = ""
 		newState.GatewayHost = gatewayHost
 		newState.GatewayPort = gatewayPort
 		newState.GatewayPublicKey = r.GatewayPublicKey

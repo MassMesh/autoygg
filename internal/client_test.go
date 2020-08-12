@@ -195,7 +195,7 @@ func (*Suite) TestRegistration(c *check.C) {
 
 	loadedState, err := loadState(state{})
 	c.Assert(err, check.Equals, nil)
-	c.Assert(loadedState.State, check.Equals, "registered")
+	c.Assert(loadedState.State, check.Equals, "connected")
 
 	r, State, err = doRequest(fs, "renew", YggAddress, GatewayPort, State)
 	c.Assert(err, check.Equals, nil)

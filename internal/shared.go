@@ -191,10 +191,21 @@ func peerRouteWorker(action string, peer string, defaultGatewayIP string, defaul
 	if err != nil {
 		return
 	}
-
-	if (action == "Add" && matched) || (action == "Del" && !matched) {
+	if action == "Add" && matched {
 		// Nothing to do!
 		return
+	}
+
+	if action == "Del" && !matched {
+		// The blackhole route could be the only one left. The AddPeerRouteListCommand has a via so it will never show the blackhole route.
+		blackholeMatched, err := regexp.Match(`^blackhole\s+`+peer, out)
+		if err != nil {
+			return change, err
+		}
+		if !blackholeMatched {
+			// Nothing to do!
+			return change, err
+		}
 	}
 
 	cmd = viper.GetString(action + "PeerRouteCommand")
@@ -277,7 +288,20 @@ func yggdrasilPeers() (peers []string, err error) {
 		return
 	}
 	peers, err = yggdrasilConfigPeers(peers)
-	return
+	if err != nil {
+		return
+	}
+	// Deduplicate the peer list
+	peerMap := make(map[string]bool)
+	for _, p := range peers {
+		peerMap[p] = true
+	}
+	var dedupPeers []string
+	for p := range peerMap {
+		dedupPeers = append(dedupPeers, p)
+	}
+
+	return dedupPeers, nil
 }
 
 func yggdrasilRunningPeers(startingPeers []string) (peers []string, err error) {
