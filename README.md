@@ -54,18 +54,6 @@ Example session:
 
 1) Go to the machine that will run *autoygg-server*.
 
-The `autoygg-server` program will accept parameters in a configuration file named *server.yaml*, which can be located in */etc/autoygg/* or in the directory the *autoygg-server* binary is executed from. A few parameters may be specified as command line arguments. The complete list of parameters can be consulted by running *autoygg-server --help*, e.g.:
-
-```
-$ ./autoygg-server --help
-
-autoygg-server provides internet egress for Yggdrasil nodes running autoygg-client.
-
-Options:
-      --dumpConfig   dump the configuration that would be used by autoygg-server and exit
-      --help         print usage and exit
-```
-
 Create a config file at */etc/autoygg/server.yaml*. A sample configuration file is provided in *cmd/autoygg-server/server.yaml*. A minimal configuration could be:
 
 ```
@@ -93,7 +81,7 @@ AccessList:
     comment: node at 124 main street
 ```
 
-Note: the `autoygg-server` program will automatically reload its config files when they change. There is no need to restart it after modifying the main config file or the accesslist.
+Note: the `autoygg-server` program will automatically reload its config files when they change. There is no need to restart it after modifying the main config file or the accesslist. For more details see the [server documentation](doc/server.md).
 
 2) run `autoygg-server`, e.g. in screen:
 
@@ -184,9 +172,6 @@ Removing Yggdrasil local subnet 0.0.0.0/0                             [ ok ]
 Disabling Yggdrasil tunnel routing                                    [ ok ]
 $
 ```
-
-## Database
-autoygg creates a SQLite database at `/var/lib/autoygg/autoygg.db`. Be sure to back it up when changing versions.
 
 ## Hacking
 
