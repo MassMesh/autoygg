@@ -683,14 +683,15 @@ func firewallRulesWorker(action string, rule string) (err error) {
 	return
 }
 
-func commandWorker(action string, commandName string, substitutes []string) (err error) {
+func commandWorker(action string, commandName string, substitutes []string, ignoreListError bool) (err error) {
 	cmd := viper.GetString("List" + commandName)
 	for _, sub := range substitutes {
 		cmd = strings.Replace(cmd, "%%"+sub+"%%", viper.GetString(sub), -1)
 	}
 
 	out, err := command(viper.GetString("Shell"), viper.GetString("ShellCommandArg"), cmd).Output()
-	if err != nil {
+	// if ignoreListError is true, a failed list command is the equivalent of a list command without output
+	if !ignoreListError && err != nil {
 		err = fmt.Errorf("Unable to run `%s %s %s`: %s", viper.GetString("Shell"), viper.GetString("ShellCommandArg"), cmd, err)
 		return
 	}
@@ -733,7 +734,7 @@ func ipRouteMeshTableWorker(action string, message string) (err error) {
 	debug("Detected gateway device is %s, while configured GatewayWanInterface is %s", dev, viper.GetString("GatewayWanInterface"))
 	if dev != viper.GetString("GatewayWanInterface") {
 		log.Print(message)
-		err = commandWorker(action, "IpRouteTableMeshCommand", []string{"GatewayWanInterface", "RoutingTableNumber"})
+		err = commandWorker(action, "IpRouteTableMeshCommand", []string{"GatewayWanInterface", "RoutingTableNumber"}, true)
 	}
 
 	return
@@ -767,7 +768,7 @@ func setup() {
 	err = addLocalSubnet("0.0.0.0/0")
 	handleError(err, true)
 	log.Printf("Adding ip rule for %s/%d to table %d", viper.GetString("GatewayTunnelIP"), viper.GetInt("GatewayTunnelNetmask"), viper.GetInt("RoutingTableNumber"))
-	err = commandWorker("Add", "IpRuleCommand", []string{"GatewayTunnelIP", "GatewayTunnelNetMask", "RoutingTableNumber"})
+	err = commandWorker("Add", "IpRuleCommand", []string{"GatewayTunnelIP", "GatewayTunnelNetMask", "RoutingTableNumber"}, false)
 	handleError(err, true)
 	err = ipRouteMeshTableWorker("Add", fmt.Sprintf("Detected vpn configuration, adding mesh routing default gateway to table %d", viper.GetInt("RoutingTableNumber")))
 	handleError(err, true)
@@ -782,11 +783,11 @@ func tearDown() {
 		debug("Tearing down %+v\n", change)
 		if change.Name == "IpRuleCommand" {
 			log.Printf("Removing ip rule for %s/%d to table %d", viper.GetString("GatewayTunnelIP"), viper.GetInt("GatewayTunnelNetmask"), viper.GetInt("RoutingTableNumber"))
-			err := commandWorker("Del", "IpRuleCommand", []string{"GatewayTunnelIP", "GatewayTunnelNetMask", "RoutingTableNumber"})
+			err := commandWorker("Del", "IpRuleCommand", []string{"GatewayTunnelIP", "GatewayTunnelNetMask", "RoutingTableNumber"}, false)
 			handleError(err, true)
 		} else if change.Name == "RouteTableMeshCommand" {
 			log.Printf("Removing mesh routing default gateway from table %d", viper.GetInt("RoutingTableNumber"))
-			err := commandWorker("Del", "IpRouteTableMeshCommand", []string{"GatewayWanInterface", "RoutingTableNumber"})
+			err := commandWorker("Del", "IpRouteTableMeshCommand", []string{"GatewayWanInterface", "RoutingTableNumber"}, false)
 			handleError(err, true)
 		} else if change.Name == "TunnelIP" {
 			log.Printf("Removing tunnel IP %s/%d", viper.GetString("GatewayTunnelIP"), viper.GetInt("GatewayTunnelNetmask"))
