@@ -184,6 +184,10 @@ Removing Yggdrasil local subnet 0.0.0.0/0                             [ ok ]
 Disabling Yggdrasil tunnel routing                                    [ ok ]
 $
 ```
+
+## Database
+autoygg creates a SQLite database at `/var/lib/autoygg/autoygg.db`. Be sure to back it up when changing versions.
+
 ## Hacking
 
 GNU Make and a Go compiler, version 1.11 or higher are required. In addition,
