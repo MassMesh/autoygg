@@ -7,7 +7,7 @@
 
 On startup, `autoygg-server` sets up some rudimentary firewall rules, enables IP forwarding, enables Yggdrasil tunnel routing and adds an Yggdrasil local subnet. It then sets up an `ip rule` to send all traffic from the clients via a dedicated routing table, and finally sets the tunnel IP and netmask on the configured Yggdrasil interface. On shutdown, `autoygg-server` does its best to undo all those changes.
 
-When an `autoygg-client` registers for internet access, `autoygg-server` uses its operating mode (see [the specification](../SPEC.md)) to determine if access should be granted. If so, it issues an IP address to the client from its configured range. It then instructs Yggdrasil to add a remote subnet for the client, at which point the client can route internet traffic through the gateway. Each client lease has an expiry time, and the client is expected to renew its lease before the lease period expires.
+When an `autoygg-client` registers for internet access, `autoygg-server` uses its operating mode (see [the specification](SPEC.md)) to determine if access should be granted. If so, it issues an IP address to the client from its configured range. It then instructs Yggdrasil to add a remote subnet for the client, at which point the client can route internet traffic through the gateway. Each client lease has an expiry time, and the client is expected to renew its lease before the lease period expires.
 
 ## Requirements
 
