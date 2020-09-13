@@ -1,9 +1,7 @@
 package internal
 
 import (
-	"bufio"
 	"bytes"
-	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,8 +11,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"strconv"
-	"strings"
 	"syscall"
 	"time"
 
@@ -611,78 +607,4 @@ func ClientMain() {
 		State, _ = clientTearDownRoutes(r.ClientIP, r.ClientNetMask, r.ClientGateway, r.GatewayPublicKey, State)
 		_, _, _ = doRequest(fs, "release", viper.GetString("GatewayHost"), viper.GetString("GatewayPort"), State)
 	}
-}
-
-// DiscoverLocalGateway returns the device and IP of the default network gateway
-// borrowed from https://github.com/jackpal/gateway (3-clause BSD)
-// changed to return the gateway device as well
-func DiscoverLocalGateway(YggdrasilInterface string) (dev string, ip net.IP, err error) {
-	if YggdrasilInterface == "" {
-		YggdrasilInterface = viper.GetString("YggdrasilInterface")
-	}
-	const file = "/proc/net/route"
-	f, err := os.Open(file)
-	if err != nil {
-		return "", nil, fmt.Errorf("Can't access %s", file)
-	}
-	defer f.Close()
-
-	bytes, err := ioutil.ReadAll(f)
-	if err != nil {
-		return "", nil, fmt.Errorf("Can't read %s", file)
-	}
-	return parseLinuxProcNetRoute(YggdrasilInterface, bytes)
-}
-
-// borrowed from https://github.com/jackpal/gateway (3-clause BSD)
-// changed to return the gateway device as well
-func parseLinuxProcNetRoute(YggdrasilInterface string, f []byte) (string, net.IP, error) {
-	/* /proc/net/route file:
-	   Iface   Destination Gateway     Flags   RefCnt  Use Metric  Mask
-	   eno1    00000000    C900A8C0    0003    0   0   100 00000000    0   00
-	   eno1    0000A8C0    00000000    0001    0   0   100 00FFFFFF    0   00
-	*/
-	const (
-		sep      = "\t" // field separator
-		devfield = 0    // field containing gateway internet device name
-		field    = 2    // field containing hex gateway address
-	)
-	scanner := bufio.NewScanner(bytes.NewReader(f))
-	// Skip header line
-	if !scanner.Scan() {
-		return "", nil, errors.New("Invalid linux route file")
-	}
-	for scanner.Scan() {
-		// get field containing gateway address
-		tokens := strings.Split(scanner.Text(), sep)
-		if len(tokens) <= field {
-			return "", nil, errors.New("Invalid linux route file")
-		}
-		gatewayHex := "0x" + tokens[field]
-
-		// cast hex address to uint32
-		d, _ := strconv.ParseInt(gatewayHex, 0, 64)
-		d32 := uint32(d)
-
-		// make net.IP address from uint32
-		ipd32 := make(net.IP, 4)
-		binary.LittleEndian.PutUint32(ipd32, d32)
-
-		// We want the (original) local gateway, not the Autoygg gateway
-		if tokens[devfield] == YggdrasilInterface {
-			debug("Skipping %s via %s\n", net.IP(ipd32), tokens[devfield])
-			continue
-		}
-		// If there are any routes that are not attached to a specific interface,
-		// like blacklist routes, skip those too
-		if tokens[devfield] == "*" {
-			debug("Skipping %s via %s\n", net.IP(ipd32), tokens[devfield])
-			continue
-		}
-
-		// format net.IP to dotted ipV4 string
-		debug("Returning %s via %s\n", net.IP(ipd32), tokens[devfield])
-		return tokens[devfield], net.IP(ipd32), nil
-	}
-	return "", nil, errors.New("Failed to parse linux route file")
 }

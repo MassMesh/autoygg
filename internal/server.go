@@ -452,13 +452,22 @@ func serverLoadConfigDefaults() {
 	// * permit forward traffic from the clients
 	// * permit forward traffic to the clients
 	// * masquerade traffic from the clients
-	viper.SetDefault("FirewallWanInterface", "eth0")
-	viper.SetDefault("FirewallRuleForwardingOutUp", "iptables -A FORWARD -i %%YggdrasilInterface%% -o %%FirewallWanInterface%% -j ACCEPT")
-	viper.SetDefault("FirewallRuleForwardingOutDown", "iptables -D FORWARD -i %%YggdrasilInterface%% -o %%FirewallWanInterface%% -j ACCEPT")
-	viper.SetDefault("FirewallRuleForwardingInUp", "iptables -A FORWARD -i %%FirewallWanInterface%% -o %%YggdrasilInterface%% -j ACCEPT")
-	viper.SetDefault("FirewallRuleForwardingInDown", "iptables -D FORWARD -i %%FirewallWanInterface%% -o %%YggdrasilInterface%% -j ACCEPT")
-	viper.SetDefault("FirewallRuleMasqueradeUp", "iptables -t nat -A POSTROUTING -o %%FirewallWanInterface%% -j MASQUERADE")
-	viper.SetDefault("FirewallRuleMasqueradeDown", "iptables -t nat -D POSTROUTING -o %%FirewallWanInterface%% -j MASQUERADE")
+	viper.SetDefault("GatewayWanInterface", "eth0")
+	viper.SetDefault("FirewallRuleForwardingOutUp", "iptables -A FORWARD -i %%YggdrasilInterface%% -o %%GatewayWanInterface%% -j ACCEPT")
+	viper.SetDefault("FirewallRuleForwardingOutDown", "iptables -D FORWARD -i %%YggdrasilInterface%% -o %%GatewayWanInterface%% -j ACCEPT")
+	viper.SetDefault("FirewallRuleForwardingInUp", "iptables -A FORWARD -i %%GatewayWanInterface%% -o %%YggdrasilInterface%% -j ACCEPT")
+	viper.SetDefault("FirewallRuleForwardingInDown", "iptables -D FORWARD -i %%GatewayWanInterface%% -o %%YggdrasilInterface%% -j ACCEPT")
+	viper.SetDefault("FirewallRuleMasqueradeUp", "iptables -t nat -A POSTROUTING -o %%GatewayWanInterface%% -j MASQUERADE")
+	viper.SetDefault("FirewallRuleMasqueradeDown", "iptables -t nat -D POSTROUTING -o %%GatewayWanInterface%% -j MASQUERADE")
+	// routing table number. All routes will be installed in this table, and a rule will be added to direct traffic
+	// from the mesh to it.
+	viper.SetDefault("RoutingTableNumber", 42)
+	viper.SetDefault("ListIpRuleCommand", "ip rule list from %%GatewayTunnelIP%%/%%GatewayTunnelNetMask%% table %%RoutingTableNumber%%")
+	viper.SetDefault("AddIpRuleCommand", "ip rule add from %%GatewayTunnelIP%%/%%GatewayTunnelNetMask%% table %%RoutingTableNumber%%")
+	viper.SetDefault("DelIpRuleCommand", "ip rule del from %%GatewayTunnelIP%%/%%GatewayTunnelNetMask%% table %%RoutingTableNumber%%")
+	viper.SetDefault("ListIpRouteTableMeshCommand", "ip ro list default dev %%GatewayWanInterface%% table %%RoutingTableNumber%%")
+	viper.SetDefault("AddIpRouteTableMeshCommand", "ip ro add default dev %%GatewayWanInterface%% table %%RoutingTableNumber%%")
+	viper.SetDefault("DelIpRouteTableMeshCommand", "ip ro del default dev %%GatewayWanInterface%% table %%RoutingTableNumber%%")
 }
 
 func serverLoadConfig(path string) (fs *flag.FlagSet) {
@@ -661,7 +670,7 @@ func ipForwardingWorker(payload string) (err error) {
 func firewallRulesWorker(action string, rule string) (err error) {
 	cmd := viper.GetString(rule + action)
 	cmd = strings.Replace(cmd, "%%YggdrasilInterface%%", viper.GetString("YggdrasilInterface"), -1)
-	cmd = strings.Replace(cmd, "%%FirewallWanInterface%%", viper.GetString("FirewallWanInterface"), -1)
+	cmd = strings.Replace(cmd, "%%GatewayWanInterface%%", viper.GetString("GatewayWanInterface"), -1)
 
 	out, err := command(viper.GetString("Shell"), viper.GetString("ShellCommandArg"), cmd).CombinedOutput()
 	if err != nil {
@@ -671,6 +680,62 @@ func firewallRulesWorker(action string, rule string) (err error) {
 	if action == "Up" {
 		configChanges = append(configChanges, configChange{Name: rule, OldVal: "", NewVal: ""})
 	}
+	return
+}
+
+func commandWorker(action string, commandName string, substitutes []string) (err error) {
+	cmd := viper.GetString("List" + commandName)
+	for _, sub := range substitutes {
+		cmd = strings.Replace(cmd, "%%"+sub+"%%", viper.GetString(sub), -1)
+	}
+
+	out, err := command(viper.GetString("Shell"), viper.GetString("ShellCommandArg"), cmd).Output()
+	if err != nil {
+		err = fmt.Errorf("Unable to run `%s %s %s`: %s", viper.GetString("Shell"), viper.GetString("ShellCommandArg"), cmd, err)
+		return
+	}
+
+	if (action == "Add" && len(out) == 0) || (action == "Del" && len(out) != 0) {
+		cmd = viper.GetString(action + commandName)
+		for _, sub := range substitutes {
+			cmd = strings.Replace(cmd, "%%"+sub+"%%", viper.GetString(sub), -1)
+		}
+		out, err = command(viper.GetString("Shell"), viper.GetString("ShellCommandArg"), cmd).CombinedOutput()
+		if err != nil {
+			err = fmt.Errorf("Unable to run `%s %s %s`: %s (%s)", viper.GetString("Shell"), viper.GetString("ShellCommandArg"), cmd, err, out)
+			return
+		}
+	} else {
+		debug("Command output for action %s: %s (len %d)\n", action, string(out), len(out))
+	}
+	if action == "Add" {
+		configChanges = append(configChanges, configChange{Name: commandName, OldVal: "", NewVal: ""})
+	}
+	return
+}
+
+// ipRouteMeshTableWorker installs a default route in the mesh routing table
+// (defaults to id 42), but only if the host default gateway is different from
+// GatewayWanInterface. This is the case in a vpn scenario, where
+// GatewayWanInterface will be configured to (e.g.) `vpn0`, which is a
+// point-to-point link to the vpn server. In that case, the mesh routing table
+// should have a default route to send all traffic out over that interface.
+//
+// In the non-vpn case, all traffic from the
+// GatewayTunnelIP/GatewayTunnelNetmask network will still go via the mesh
+// routing table, but we don't install any routes into it, so the traffic will
+// then continue to be routed by the main table.
+func ipRouteMeshTableWorker(action string, message string) (err error) {
+	dev, _, err := DiscoverLocalGateway(viper.GetString("YggdrasilInterface"))
+	if err != nil {
+		return
+	}
+	debug("Detected gateway device is %s, while configured GatewayWanInterface is %s", dev, viper.GetString("GatewayWanInterface"))
+	if dev != viper.GetString("GatewayWanInterface") {
+		log.Print(message)
+		err = commandWorker(action, "IpRouteTableMeshCommand", []string{"GatewayWanInterface", "RoutingTableNumber"})
+	}
+
 	return
 }
 
@@ -701,6 +766,11 @@ func setup() {
 	log.Printf("Adding Yggdrasil local subnet 0.0.0.0/0")
 	err = addLocalSubnet("0.0.0.0/0")
 	handleError(err, true)
+	log.Printf("Adding ip rule for %s/%d to table %d", viper.GetString("GatewayTunnelIP"), viper.GetInt("GatewayTunnelNetmask"), viper.GetInt("RoutingTableNumber"))
+	err = commandWorker("Add", "IpRuleCommand", []string{"GatewayTunnelIP", "GatewayTunnelNetMask", "RoutingTableNumber"})
+	handleError(err, true)
+	err = ipRouteMeshTableWorker("Add", fmt.Sprintf("Detected vpn configuration, adding mesh routing default gateway to table %d", viper.GetInt("RoutingTableNumber")))
+	handleError(err, true)
 	log.Printf("Adding tunnel IP %s/%d", viper.GetString("GatewayTunnelIP"), viper.GetInt("GatewayTunnelNetmask"))
 	err = addTunnelIP(viper.GetString("GatewayTunnelIP"), viper.GetInt("GatewayTunnelNetmask"))
 	handleError(err, true)
@@ -710,7 +780,15 @@ func tearDown() {
 	for i := len(configChanges) - 1; i >= 0; i-- {
 		change := configChanges[i]
 		debug("Tearing down %+v\n", change)
-		if change.Name == "TunnelIP" {
+		if change.Name == "IpRuleCommand" {
+			log.Printf("Removing ip rule for %s/%d to table %d", viper.GetString("GatewayTunnelIP"), viper.GetInt("GatewayTunnelNetmask"), viper.GetInt("RoutingTableNumber"))
+			err := commandWorker("Del", "IpRuleCommand", []string{"GatewayTunnelIP", "GatewayTunnelNetMask", "RoutingTableNumber"})
+			handleError(err, true)
+		} else if change.Name == "RouteTableMeshCommand" {
+			log.Printf("Removing mesh routing default gateway from table %d", viper.GetInt("RoutingTableNumber"))
+			err := commandWorker("Del", "IpRouteTableMeshCommand", []string{"GatewayWanInterface", "RoutingTableNumber"})
+			handleError(err, true)
+		} else if change.Name == "TunnelIP" {
 			log.Printf("Removing tunnel IP %s/%d", viper.GetString("GatewayTunnelIP"), viper.GetInt("GatewayTunnelNetmask"))
 			err := removeTunnelIP(viper.GetString("GatewayTunnelIP"), viper.GetInt("GatewayTunnelNetmask"))
 			handleError(err, true)
