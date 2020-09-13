@@ -61,9 +61,9 @@ OpenVPN example: configure OpenVPN with these directives:
   route-nopull
   ```
 
-Then, to configure VPN egress in `autoygg-server`, set the `GatewayWanInterface` configuration option to the VPN interface `vpn0`. This will cause `autoygg-server` to add a default route via that interface to the mesh routing table (id determined by the `RoutingTableNumber` config option). The `GatewayWanInterface` is also used in the firewall rules that `autoygg-server` sets up.
+Then, to configure VPN egress in `autoygg-server`, set the `GatewayWanInterface` configuration option to the VPN interface `vpn0`. This will cause `autoygg-server` to add a default route via that interface to the mesh routing table (update the `RoutingTableNumber` config option to change the routing table ID). The `GatewayWanInterface` is also used in the firewall rules that `autoygg-server` sets up.
 
-To avoid future routing table namespace conflicts, it is recommended to add the `RoutingTableNumber` id to the `/etc/iproute2/rt_tables` file. This is optional, e.g.:
+To avoid future routing table namespace conflicts, it is recommended to add the `RoutingTableNumber` ID to the `/etc/iproute2/rt_tables` file. This is optional, e.g.:
 
   ```
   42      mesh
