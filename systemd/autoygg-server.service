@@ -9,7 +9,8 @@ After=yggdrasil.service
 ProtectHome=true
 ProtectSystem=true
 SyslogIdentifier=autoygg-server
-CapabilityBoundingSet=CAP_NET_ADMIN
+# CAP_NET_RAW and CAP_NET_ADMIN are required for iptables
+CapabilityBoundingSet=CAP_NET_RAW CAP_NET_ADMIN
 ExecStart=/usr/bin/autoygg-server
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=always

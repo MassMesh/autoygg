@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 )
@@ -447,6 +448,17 @@ func serverLoadConfigDefaults() {
 	viper.SetDefault("Debug", false)
 	viper.SetDefault("Version", false)
 	viper.SetDefault("GatewayPublicKey", "")
+	// Set up rudimentary firewall rules that will permit
+	// * permit forward traffic from the clients
+	// * permit forward traffic to the clients
+	// * masquerade traffic from the clients
+	viper.SetDefault("FirewallWanInterface", "eth0")
+	viper.SetDefault("FirewallRuleForwardingOutUp", "iptables -A FORWARD -i %%YggdrasilInterface%% -o %%FirewallWanInterface%% -j ACCEPT")
+	viper.SetDefault("FirewallRuleForwardingOutDown", "iptables -D FORWARD -i %%YggdrasilInterface%% -o %%FirewallWanInterface%% -j ACCEPT")
+	viper.SetDefault("FirewallRuleForwardingInUp", "iptables -A FORWARD -i %%FirewallWanInterface%% -o %%YggdrasilInterface%% -j ACCEPT")
+	viper.SetDefault("FirewallRuleForwardingInDown", "iptables -D FORWARD -i %%FirewallWanInterface%% -o %%YggdrasilInterface%% -j ACCEPT")
+	viper.SetDefault("FirewallRuleMasqueradeUp", "iptables -t nat -A POSTROUTING -o %%FirewallWanInterface%% -j MASQUERADE")
+	viper.SetDefault("FirewallRuleMasqueradeDown", "iptables -t nat -D POSTROUTING -o %%FirewallWanInterface%% -j MASQUERADE")
 }
 
 func serverLoadConfig(path string) (fs *flag.FlagSet) {
@@ -646,6 +658,22 @@ func ipForwardingWorker(payload string) (err error) {
 	return
 }
 
+func firewallRulesWorker(action string, rule string) (err error) {
+	cmd := viper.GetString(rule + action)
+	cmd = strings.Replace(cmd, "%%YggdrasilInterface%%", viper.GetString("YggdrasilInterface"), -1)
+	cmd = strings.Replace(cmd, "%%FirewallWanInterface%%", viper.GetString("FirewallWanInterface"), -1)
+
+	out, err := command(viper.GetString("Shell"), viper.GetString("ShellCommandArg"), cmd).CombinedOutput()
+	if err != nil {
+		err = fmt.Errorf("Unable to run `%s %s %s`: %s (%s)", viper.GetString("Shell"), viper.GetString("ShellCommandArg"), cmd, err, out)
+		return
+	}
+	if action == "Up" {
+		configChanges = append(configChanges, configChange{Name: rule, OldVal: "", NewVal: ""})
+	}
+	return
+}
+
 type configChange struct {
 	Name   string
 	OldVal interface{}
@@ -655,8 +683,17 @@ type configChange struct {
 var configChanges []configChange
 
 func setup() {
+	log.Printf("Set up firewall rule Forwarding Out")
+	err := firewallRulesWorker("Up", "FirewallRuleForwardingOut")
+	handleError(err, false)
+	log.Printf("Set up firewall rule Forwarding In")
+	err = firewallRulesWorker("Up", "FirewallRuleForwardingIn")
+	handleError(err, false)
+	log.Printf("Set up firewall rule Masquerading")
+	err = firewallRulesWorker("Up", "FirewallRuleMasquerade")
+	handleError(err, false)
 	log.Printf("Enabling IP forwarding")
-	err := enableIPForwarding()
+	err = enableIPForwarding()
 	handleError(err, true)
 	log.Printf("Enabling Yggdrasil tunnel routing")
 	err = enableTunnelRouting()
@@ -688,6 +725,18 @@ func tearDown() {
 		} else if change.Name == "IPForwarding" {
 			log.Printf("Disabling IP forwarding")
 			err := disableIPForwarding()
+			handleError(err, true)
+		} else if change.Name == "FirewallRuleForwardingOut" {
+			log.Printf("Disabling FirewallRuleForwardingOut")
+			err := firewallRulesWorker("Down", "FirewallRuleForwardingOut")
+			handleError(err, true)
+		} else if change.Name == "FirewallRuleForwardingIn" {
+			log.Printf("Disabling FirewallRuleForwardingIn")
+			err := firewallRulesWorker("Down", "FirewallRuleForwardingIn")
+			handleError(err, true)
+		} else if change.Name == "FirewallRuleMasquerade" {
+			log.Printf("Disabling FirewallRuleMasquerade")
+			err := firewallRulesWorker("Down", "FirewallRuleMasquerade")
 			handleError(err, true)
 		}
 	}
