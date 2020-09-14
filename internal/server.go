@@ -748,6 +748,36 @@ type configChange struct {
 
 var configChanges []configChange
 
+// loadLeases loads the valid leases from the database and makes sure that
+// Yggdrasil has the correct remote subnets configured. loadLeases is called
+// when autoygg-server starts up.  It is not strictly necessary when
+// autoygg-server is restarted, but it is required when Yggdrasil is restarted,
+// e.g. after a reboot of the machine.
+func loadLeases(db *gorm.DB) (err error) {
+	var registrations []registration
+
+	result := db.Model(&registration{}).Where("state = 'success' and lease_expires > ?", time.Now()).Find(&registrations)
+	if result.Error != nil {
+		err = result.Error
+		return
+	}
+	debug("Found %d valid leases to load\n", result.RowsAffected)
+
+	// These leases are still valid, make sure everything is configured properly
+	for _, r := range registrations {
+		r.State = "open"
+		if result := db.Save(&r); result.Error != nil {
+			incErrorCount("internal")
+			log.Println("Internal error, unable to execute query:", result.Error)
+			return
+		}
+		debug("re-enabling lease for registration %+v\n", r)
+		queueAddRemoteSubnet(db, r.ID)
+	}
+
+	return
+}
+
 func setup() {
 	log.Printf("Set up firewall rule Forwarding Out")
 	err := firewallRulesWorker("Up", "FirewallRuleForwardingOut")
@@ -869,6 +899,11 @@ func ServerMain() {
 	r := setupRouter(db)
 
 	setup()
+
+	err := loadLeases(db)
+	if err != nil {
+		Fatal(err)
+	}
 
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
