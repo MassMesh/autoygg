@@ -453,12 +453,12 @@ func serverLoadConfigDefaults() {
 	// * permit forward traffic to the clients
 	// * masquerade traffic from the clients
 	viper.SetDefault("GatewayWanInterface", "eth0")
-	viper.SetDefault("FirewallRuleForwardingOutUp", "iptables -A FORWARD -i %%YggdrasilInterface%% -o %%GatewayWanInterface%% -j ACCEPT")
-	viper.SetDefault("FirewallRuleForwardingOutDown", "iptables -D FORWARD -i %%YggdrasilInterface%% -o %%GatewayWanInterface%% -j ACCEPT")
-	viper.SetDefault("FirewallRuleForwardingInUp", "iptables -A FORWARD -i %%GatewayWanInterface%% -o %%YggdrasilInterface%% -j ACCEPT")
-	viper.SetDefault("FirewallRuleForwardingInDown", "iptables -D FORWARD -i %%GatewayWanInterface%% -o %%YggdrasilInterface%% -j ACCEPT")
-	viper.SetDefault("FirewallRuleMasqueradeUp", "iptables -t nat -A POSTROUTING -o %%GatewayWanInterface%% -j MASQUERADE")
-	viper.SetDefault("FirewallRuleMasqueradeDown", "iptables -t nat -D POSTROUTING -o %%GatewayWanInterface%% -j MASQUERADE")
+	viper.SetDefault("AddFirewallRuleForwardingOutCommand", "iptables -A FORWARD -i %%YggdrasilInterface%% -o %%GatewayWanInterface%% -j ACCEPT")
+	viper.SetDefault("DelFirewallRuleForwardingOutCommand", "iptables -D FORWARD -i %%YggdrasilInterface%% -o %%GatewayWanInterface%% -j ACCEPT")
+	viper.SetDefault("AddFirewallRuleForwardingInCommand", "iptables -A FORWARD -i %%GatewayWanInterface%% -o %%YggdrasilInterface%% -j ACCEPT")
+	viper.SetDefault("DelFirewallRuleForwardingInCommand", "iptables -D FORWARD -i %%GatewayWanInterface%% -o %%YggdrasilInterface%% -j ACCEPT")
+	viper.SetDefault("AddFirewallRuleMasqueradeCommand", "iptables -t nat -A POSTROUTING -o %%GatewayWanInterface%% -j MASQUERADE")
+	viper.SetDefault("DelFirewallRuleMasqueradeCommand", "iptables -t nat -D POSTROUTING -o %%GatewayWanInterface%% -j MASQUERADE")
 	// routing table number. All routes will be installed in this table, and a rule will be added to direct traffic
 	// from the mesh to it.
 	viper.SetDefault("RoutingTableNumber", 42)
@@ -667,8 +667,8 @@ func ipForwardingWorker(payload string) (err error) {
 	return
 }
 
-func firewallRulesWorker(action string, rule string) (err error) {
-	cmd := viper.GetString(rule + action)
+func firewallRulesWorker(action string, commandName string) (err error) {
+	cmd := viper.GetString(action + commandName)
 	cmd = strings.Replace(cmd, "%%YggdrasilInterface%%", viper.GetString("YggdrasilInterface"), -1)
 	cmd = strings.Replace(cmd, "%%GatewayWanInterface%%", viper.GetString("GatewayWanInterface"), -1)
 
@@ -677,8 +677,8 @@ func firewallRulesWorker(action string, rule string) (err error) {
 		err = fmt.Errorf("Unable to run `%s %s %s`: %s (%s)", viper.GetString("Shell"), viper.GetString("ShellCommandArg"), cmd, err, out)
 		return
 	}
-	if action == "Up" {
-		configChanges = append(configChanges, configChange{Name: rule, OldVal: "", NewVal: ""})
+	if action == "Add" {
+		configChanges = append(configChanges, configChange{Name: commandName, OldVal: "", NewVal: ""})
 	}
 	return
 }
@@ -780,13 +780,13 @@ func loadLeases(db *gorm.DB) (err error) {
 
 func setup() {
 	log.Printf("Set up firewall rule Forwarding Out")
-	err := firewallRulesWorker("Up", "FirewallRuleForwardingOut")
+	err := firewallRulesWorker("Add", "FirewallRuleForwardingOutCommand")
 	handleError(err, false)
 	log.Printf("Set up firewall rule Forwarding In")
-	err = firewallRulesWorker("Up", "FirewallRuleForwardingIn")
+	err = firewallRulesWorker("Add", "FirewallRuleForwardingInCommand")
 	handleError(err, false)
 	log.Printf("Set up firewall rule Masquerading")
-	err = firewallRulesWorker("Up", "FirewallRuleMasquerade")
+	err = firewallRulesWorker("Add", "FirewallRuleMasqueradeCommand")
 	handleError(err, false)
 	log.Printf("Enabling IP forwarding")
 	err = enableIPForwarding()
@@ -815,7 +815,7 @@ func tearDown() {
 			log.Printf("Removing ip rule for %s/%d to table %d", viper.GetString("GatewayTunnelIP"), viper.GetInt("GatewayTunnelNetmask"), viper.GetInt("RoutingTableNumber"))
 			err := commandWorker("Del", "IpRuleCommand", []string{"GatewayTunnelIP", "GatewayTunnelNetMask", "RoutingTableNumber"}, false)
 			handleError(err, true)
-		} else if change.Name == "RouteTableMeshCommand" {
+		} else if change.Name == "IpRouteTableMeshCommand" {
 			log.Printf("Removing mesh routing default gateway from table %d", viper.GetInt("RoutingTableNumber"))
 			err := commandWorker("Del", "IpRouteTableMeshCommand", []string{"GatewayWanInterface", "RoutingTableNumber"}, false)
 			handleError(err, true)
@@ -835,17 +835,17 @@ func tearDown() {
 			log.Printf("Disabling IP forwarding")
 			err := disableIPForwarding()
 			handleError(err, true)
-		} else if change.Name == "FirewallRuleForwardingOut" {
+		} else if change.Name == "FirewallRuleForwardingOutCommand" {
 			log.Printf("Disabling FirewallRuleForwardingOut")
-			err := firewallRulesWorker("Down", "FirewallRuleForwardingOut")
+			err := firewallRulesWorker("Del", change.Name)
 			handleError(err, true)
-		} else if change.Name == "FirewallRuleForwardingIn" {
+		} else if change.Name == "FirewallRuleForwardingInCommand" {
 			log.Printf("Disabling FirewallRuleForwardingIn")
-			err := firewallRulesWorker("Down", "FirewallRuleForwardingIn")
+			err := firewallRulesWorker("Del", change.Name)
 			handleError(err, true)
-		} else if change.Name == "FirewallRuleMasquerade" {
+		} else if change.Name == "FirewallRuleMasqueradeCommand" {
 			log.Printf("Disabling FirewallRuleMasquerade")
-			err := firewallRulesWorker("Down", "FirewallRuleMasquerade")
+			err := firewallRulesWorker("Del", change.Name)
 			handleError(err, true)
 		}
 	}
