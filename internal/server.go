@@ -17,12 +17,15 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 )
 
 var (
 	accesslist map[string]acl
+	mutex      sync.Mutex
+	sViper     *viper.Viper
 )
 
 type acl struct {
@@ -62,13 +65,13 @@ func enablePrometheusEndpoint() (p *ginprometheus.Prometheus) {
 }
 
 func registrationAllowed(address string) bool {
-	if !viper.GetBool("RequireRegistration") {
+	if !sViper.GetBool("RequireRegistration") {
 		// Registration is disabled. Reject.
 		debug("Registration is not required, rejecting request from %s\n", address)
 		return false
 	}
 
-	if viper.GetBool("AccessListEnabled") {
+	if sViper.GetBool("AccessListEnabled") {
 		if _, found := accesslist[address]; found && accesslist[address].Access {
 			// The address is on the accesslist. Accept.
 			debug("This address is accesslisted, accepted request from %s\n", address)
@@ -128,8 +131,8 @@ func nextIP(ip net.IP, inc uint) net.IP {
 }
 
 func newIPAddress(db *gorm.DB) (IPAddress string) {
-	ipMin := viper.GetString("GatewayTunnelIPRangeMin")
-	ipMax := viper.GetString("GatewayTunnelIPRangeMax")
+	ipMin := sViper.GetString("GatewayTunnelIPRangeMin")
+	ipMax := sViper.GetString("GatewayTunnelIPRangeMax")
 
 	count := 1
 	IP := net.ParseIP(ipMin)
@@ -206,15 +209,13 @@ func renewHandler(db *gorm.DB, c *gin.Context) {
 	}
 
 	registration = existingRegistration
-
-	// FIXME add a mutex here with the timed background thread that is going to cancel leases
-	// extend lease
-	registration.LeaseExpires = time.Now().UTC().Add(time.Duration(viper.GetInt("LeaseTimeoutSeconds")) * time.Second)
-
+	registration.LeaseExpires = time.Now().UTC().Add(time.Duration(sViper.GetInt("LeaseTimeoutSeconds")) * time.Second)
 	if registration.State != "success" {
 		registration.State = "open"
 	}
 
+	mutex.Lock()
+	defer mutex.Unlock()
 	if result := db.Save(&registration); result.Error != nil {
 		incErrorCount("internal")
 		log.Println("Internal error, unable to execute query:", result.Error)
@@ -238,7 +239,10 @@ func releaseHandler(db *gorm.DB, c *gin.Context) {
 	registration = existingRegistration
 	// Set the lease expiry date in the past
 	registration.LeaseExpires = time.Now().UTC().Add(-10 * time.Second)
+	registration.State = "expired"
 
+	mutex.Lock()
+	defer mutex.Unlock()
 	if result := db.Save(&registration); result.Error != nil {
 		incErrorCount("internal")
 		log.Println("Internal error, unable to execute query:", result.Error)
@@ -283,9 +287,9 @@ func newRegistrationHandler(db *gorm.DB, c *gin.Context) {
 	if existingRegistration == (registration{}) {
 		// First time we've seen this public key
 		newRegistration.ClientIP = newIPAddress(db)
-		newRegistration.ClientNetMask = viper.GetInt("GatewayTunnelNetMask")
-		newRegistration.ClientGateway = viper.GetString("GatewayTunnelIP")
-		newRegistration.GatewayPublicKey = viper.GetString("GatewayPublicKey")
+		newRegistration.ClientNetMask = sViper.GetInt("GatewayTunnelNetMask")
+		newRegistration.ClientGateway = sViper.GetString("GatewayTunnelIP")
+		newRegistration.GatewayPublicKey = sViper.GetString("GatewayPublicKey")
 		newRegistration.YggIP = c.ClientIP()
 	} else {
 		// FIXME only allow if the lease is expired?
@@ -294,8 +298,11 @@ func newRegistrationHandler(db *gorm.DB, c *gin.Context) {
 	}
 	newRegistration.State = "open"
 	// new lease
-	newRegistration.LeaseExpires = time.Now().UTC().Add(time.Duration(viper.GetInt("LeaseTimeoutSeconds")) * time.Second)
+	newRegistration.LeaseExpires = time.Now().UTC().Add(time.Duration(sViper.GetInt("LeaseTimeoutSeconds")) * time.Second)
 
+	log.Printf("new registration: %+v\n", newRegistration)
+	mutex.Lock()
+	defer mutex.Unlock()
 	if result := db.Save(&newRegistration); result.Error != nil {
 		incErrorCount("internal")
 		log.Println("Internal error, unable to execute query:", result.Error)
@@ -307,6 +314,7 @@ func newRegistrationHandler(db *gorm.DB, c *gin.Context) {
 	c.JSON(http.StatusOK, newRegistration)
 }
 
+// caller must hold the mutex lock
 func queueAddRemoteSubnet(db *gorm.DB, ID uint) {
 	var r registration
 	if result := db.First(&r, ID); result.Error != nil {
@@ -320,8 +328,8 @@ func queueAddRemoteSubnet(db *gorm.DB, ID uint) {
 	}
 	// FIXME: actually queue this, rather than doing it inline
 	log.Printf("Adding remote subnet for %s", r.ClientIP+"/32")
-	err := addRemoteSubnet(r.ClientIP+"/32", r.PublicKey)
-	handleError(err, false)
+	err := addRemoteSubnet(sViper, r.ClientIP+"/32", r.PublicKey)
+	handleError(err, sViper, false)
 
 	if err != nil {
 		incErrorCount("yggdrasil")
@@ -348,8 +356,8 @@ func serverRemoveRemoteSubnet(db *gorm.DB, ID uint) {
 
 	// FIXME: actually queue this, rather than doing it inline
 	log.Printf("Removing remote subnet for %s", r.ClientIP+"/32")
-	err := removeRemoteSubnet(r.ClientIP+"/32", r.PublicKey)
-	handleError(err, false)
+	err := removeRemoteSubnet(sViper, r.ClientIP+"/32", r.PublicKey)
+	handleError(err, sViper, false)
 
 	if err != nil {
 		incErrorCount("yggdrasil")
@@ -375,7 +383,7 @@ func setupRouter(db *gorm.DB) (r *gin.Engine) {
 		p.Use(r)
 		err := prometheus.Register(errorCount)
 		log.Printf("Enabling Prometheus endpoint")
-		handleError(err, false)
+		handleError(err, sViper, false)
 	}
 
 	noAuth := r.Group("/")
@@ -383,14 +391,14 @@ func setupRouter(db *gorm.DB) (r *gin.Engine) {
 		// 'info' is special, it's the only request does not return a 'registation' struct
 		noAuth.GET("/info", func(c *gin.Context) {
 			res := info{
-				GatewayOwner:        viper.GetString("GatewayOwner"),
-				Description:         viper.GetString("GatewayDescription"),
-				Network:             viper.GetString("GatewayNetwork"),
-				Location:            viper.GetString("GatewayLocation"),
-				GatewayInfoURL:      viper.GetString("GatewayInfoURL"),
-				RequireRegistration: viper.GetBool("RequireRegistration"),
-				RequireApproval:     viper.GetBool("RequireApproval"),
-				AccessListEnabled:   viper.GetBool("AccessListEnabled"),
+				GatewayOwner:        sViper.GetString("GatewayOwner"),
+				Description:         sViper.GetString("GatewayDescription"),
+				Network:             sViper.GetString("GatewayNetwork"),
+				Location:            sViper.GetString("GatewayLocation"),
+				GatewayInfoURL:      sViper.GetString("GatewayInfoURL"),
+				RequireRegistration: sViper.GetBool("RequireRegistration"),
+				RequireApproval:     sViper.GetBool("RequireApproval"),
+				AccessListEnabled:   sViper.GetBool("AccessListEnabled"),
 				SoftwareVersion:     version,
 			}
 			c.JSON(http.StatusOK, res)
@@ -427,76 +435,76 @@ func setupDB(driver string, credentials string) (db *gorm.DB) {
 }
 
 func serverLoadConfigDefaults() {
-	viper.SetDefault("ListenHost", "::1")
-	viper.SetDefault("ListenPort", "8080")
-	viper.SetDefault("GatewayOwner", "Some One <someone@example.com>")
-	viper.SetDefault("GatewayDescription", "This is an Yggdrasil internet gateway")
-	viper.SetDefault("GatewayNetwork", "Name of the egress network or ISP")
-	viper.SetDefault("GatewayLocation", "Physical location of the gateway")
-	viper.SetDefault("GatewayInfoURL", "")
-	viper.SetDefault("RequireRegistration", true)
-	viper.SetDefault("RequireApproval", true)
-	viper.SetDefault("MaxClients", 10)
-	viper.SetDefault("LeaseTimeoutSeconds", 14400) // Default to 4 hours
-	viper.SetDefault("GatewayTunnelIP", "10.42.0.1")
-	viper.SetDefault("GatewayTunnelNetMask", 16)
-	viper.SetDefault("GatewayTunnelIPRangeMin", "10.42.42.1")   // Minimum IP for "DHCP" range
-	viper.SetDefault("GatewayTunnelIPRangeMax", "10.42.42.255") // Maximum IP for "DHCP" range
-	viper.SetDefault("AccessListEnabled", true)
-	viper.SetDefault("AccessListFile", "accesslist") // Name of the file that contains the accesslist. Omit .yaml extension.
-	viper.SetDefault("YggdrasilInterface", "tun0")   // Name of the yggdrasil tunnel interface
-	viper.SetDefault("Debug", false)
-	viper.SetDefault("Version", false)
-	viper.SetDefault("GatewayPublicKey", "")
+	sViper.SetDefault("ListenHost", "::1")
+	sViper.SetDefault("ListenPort", "8080")
+	sViper.SetDefault("GatewayOwner", "Some One <someone@example.com>")
+	sViper.SetDefault("GatewayDescription", "This is an Yggdrasil internet gateway")
+	sViper.SetDefault("GatewayNetwork", "Name of the egress network or ISP")
+	sViper.SetDefault("GatewayLocation", "Physical location of the gateway")
+	sViper.SetDefault("GatewayInfoURL", "")
+	sViper.SetDefault("RequireRegistration", true)
+	sViper.SetDefault("RequireApproval", true)
+	sViper.SetDefault("MaxClients", 10)
+	sViper.SetDefault("LeaseTimeoutSeconds", 14400) // Default to 4 hours
+	sViper.SetDefault("GatewayTunnelIP", "10.42.0.1")
+	sViper.SetDefault("GatewayTunnelNetMask", 16)
+	sViper.SetDefault("GatewayTunnelIPRangeMin", "10.42.42.1")   // Minimum IP for "DHCP" range
+	sViper.SetDefault("GatewayTunnelIPRangeMax", "10.42.42.255") // Maximum IP for "DHCP" range
+	sViper.SetDefault("AccessListEnabled", true)
+	sViper.SetDefault("AccessListFile", "accesslist") // Name of the file that contains the accesslist. Omit .yaml extension.
+	sViper.SetDefault("YggdrasilInterface", "tun0")   // Name of the yggdrasil tunnel interface
+	sViper.SetDefault("Debug", false)
+	sViper.SetDefault("Version", false)
+	sViper.SetDefault("GatewayPublicKey", "")
 	// Set up rudimentary firewall rules that will permit
 	// * permit forward traffic from the clients
 	// * permit forward traffic to the clients
 	// * masquerade traffic from the clients
-	viper.SetDefault("GatewayWanInterface", "eth0")
-	viper.SetDefault("AddFirewallRuleForwardingOutCommand", "iptables -A FORWARD -i %%YggdrasilInterface%% -o %%GatewayWanInterface%% -j ACCEPT")
-	viper.SetDefault("DelFirewallRuleForwardingOutCommand", "iptables -D FORWARD -i %%YggdrasilInterface%% -o %%GatewayWanInterface%% -j ACCEPT")
-	viper.SetDefault("AddFirewallRuleForwardingInCommand", "iptables -A FORWARD -i %%GatewayWanInterface%% -o %%YggdrasilInterface%% -j ACCEPT")
-	viper.SetDefault("DelFirewallRuleForwardingInCommand", "iptables -D FORWARD -i %%GatewayWanInterface%% -o %%YggdrasilInterface%% -j ACCEPT")
-	viper.SetDefault("AddFirewallRuleMasqueradeCommand", "iptables -t nat -A POSTROUTING -o %%GatewayWanInterface%% -j MASQUERADE")
-	viper.SetDefault("DelFirewallRuleMasqueradeCommand", "iptables -t nat -D POSTROUTING -o %%GatewayWanInterface%% -j MASQUERADE")
+	sViper.SetDefault("GatewayWanInterface", "eth0")
+	sViper.SetDefault("AddFirewallRuleForwardingOutCommand", "iptables -A FORWARD -i %%YggdrasilInterface%% -o %%GatewayWanInterface%% -j ACCEPT")
+	sViper.SetDefault("DelFirewallRuleForwardingOutCommand", "iptables -D FORWARD -i %%YggdrasilInterface%% -o %%GatewayWanInterface%% -j ACCEPT")
+	sViper.SetDefault("AddFirewallRuleForwardingInCommand", "iptables -A FORWARD -i %%GatewayWanInterface%% -o %%YggdrasilInterface%% -j ACCEPT")
+	sViper.SetDefault("DelFirewallRuleForwardingInCommand", "iptables -D FORWARD -i %%GatewayWanInterface%% -o %%YggdrasilInterface%% -j ACCEPT")
+	sViper.SetDefault("AddFirewallRuleMasqueradeCommand", "iptables -t nat -A POSTROUTING -o %%GatewayWanInterface%% -j MASQUERADE")
+	sViper.SetDefault("DelFirewallRuleMasqueradeCommand", "iptables -t nat -D POSTROUTING -o %%GatewayWanInterface%% -j MASQUERADE")
 	// routing table number. All routes will be installed in this table, and a rule will be added to direct traffic
 	// from the mesh to it.
-	viper.SetDefault("RoutingTableNumber", 42)
-	viper.SetDefault("ListIpRuleCommand", "ip rule list from %%GatewayTunnelIP%%/%%GatewayTunnelNetMask%% table %%RoutingTableNumber%%")
-	viper.SetDefault("AddIpRuleCommand", "ip rule add from %%GatewayTunnelIP%%/%%GatewayTunnelNetMask%% table %%RoutingTableNumber%%")
-	viper.SetDefault("DelIpRuleCommand", "ip rule del from %%GatewayTunnelIP%%/%%GatewayTunnelNetMask%% table %%RoutingTableNumber%%")
-	viper.SetDefault("ListIpRouteTableMeshCommand", "ip ro list default dev %%GatewayWanInterface%% table %%RoutingTableNumber%%")
-	viper.SetDefault("AddIpRouteTableMeshCommand", "ip ro add default dev %%GatewayWanInterface%% table %%RoutingTableNumber%%")
-	viper.SetDefault("DelIpRouteTableMeshCommand", "ip ro del default dev %%GatewayWanInterface%% table %%RoutingTableNumber%%")
+	sViper.SetDefault("RoutingTableNumber", 42)
+	sViper.SetDefault("ListIpRuleCommand", "ip rule list from %%GatewayTunnelIP%%/%%GatewayTunnelNetMask%% table %%RoutingTableNumber%%")
+	sViper.SetDefault("AddIpRuleCommand", "ip rule add from %%GatewayTunnelIP%%/%%GatewayTunnelNetMask%% table %%RoutingTableNumber%%")
+	sViper.SetDefault("DelIpRuleCommand", "ip rule del from %%GatewayTunnelIP%%/%%GatewayTunnelNetMask%% table %%RoutingTableNumber%%")
+	sViper.SetDefault("ListIpRouteTableMeshCommand", "ip ro list default dev %%GatewayWanInterface%% table %%RoutingTableNumber%%")
+	sViper.SetDefault("AddIpRouteTableMeshCommand", "ip ro add default dev %%GatewayWanInterface%% table %%RoutingTableNumber%%")
+	sViper.SetDefault("DelIpRouteTableMeshCommand", "ip ro del default dev %%GatewayWanInterface%% table %%RoutingTableNumber%%")
 }
 
 func serverLoadConfig(path string) (fs *flag.FlagSet) {
-	viperLoadSharedDefaults()
+	viperLoadSharedDefaults(sViper)
 	serverLoadConfigDefaults()
 
-	viper.SetEnvPrefix("AUTOYGG") // will be uppercased automatically
-	err := viper.BindEnv("CONFIG")
+	sViper.SetEnvPrefix("AUTOYGG") // will be uppercased automatically
+	err := sViper.BindEnv("CONFIG")
 	if err != nil {
 		Fatal(fmt.Sprintln("Fatal error:", err.Error()))
 	}
 
 	config := "server"
-	if viper.Get("CONFIG") != nil {
-		config = viper.Get("CONFIG").(string)
+	if sViper.Get("CONFIG") != nil {
+		config = sViper.Get("CONFIG").(string)
 	}
 
 	// Load the main config file
-	viper.SetConfigType("yaml")
-	viper.SetConfigName(config)
+	sViper.SetConfigType("yaml")
+	sViper.SetConfigName(config)
 	if path == "" {
-		viper.AddConfigPath("/etc/autoygg/")
-		viper.AddConfigPath("$HOME/.autoygg")
-		viper.AddConfigPath(".")
+		sViper.AddConfigPath("/etc/autoygg/")
+		sViper.AddConfigPath("$HOME/.autoygg")
+		sViper.AddConfigPath(".")
 	} else {
 		// For testing
-		viper.AddConfigPath(path)
+		sViper.AddConfigPath(path)
 	}
-	configErr := viper.ReadInConfig()
+	configErr := sViper.ReadInConfig()
 
 	// First handle command line flags, some of which should not depend on the presence of
 	// a config file
@@ -511,22 +519,22 @@ func serverLoadConfig(path string) (fs *flag.FlagSet) {
 		Fatal(err)
 	}
 
-	err = viper.BindPFlags(fs)
+	err = sViper.BindPFlags(fs)
 	if err != nil {
 		Fatal(err)
 	}
 
-	if viper.GetBool("Help") {
+	if sViper.GetBool("Help") {
 		serverUsage(fs)
 		os.Exit(0)
 	}
 
-	if viper.GetBool("Version") {
+	if sViper.GetBool("Version") {
 		fmt.Println(version)
 		os.Exit(0)
 	}
 
-	if viper.GetBool("Debug") {
+	if sViper.GetBool("Debug") {
 		debug = debugLog.Printf
 	}
 
@@ -536,26 +544,32 @@ func serverLoadConfig(path string) (fs *flag.FlagSet) {
 
 	initializeViperList("AccessList", path, &accesslist)
 
-	viper.WatchConfig() // Automatically reload the main config when it changes
-	viper.OnConfigChange(func(e fsnotify.Event) {
-		if viper.GetBool("Debug") {
+	sViper.WatchConfig() // Automatically reload the main config when it changes
+	sViper.OnConfigChange(func(e fsnotify.Event) {
+		if sViper.GetBool("Debug") {
 			debug = debugLog.Printf
 		} else {
 			debug = func(string, ...interface{}) {}
 		}
-		fmt.Println("Config file changed:", e.Name)
+		var conf []byte
+		if err := sViper.Unmarshal(&conf); err != nil {
+			log.Println(err.Error())
+		} else {
+			fmt.Println("Config file changed:", e.Name)
+		}
+		fmt.Println(dumpConfiguration(sViper, "server"))
 	})
 
 	return
 }
 
 func initializeViperList(name string, path string, list *map[string]acl) {
-	if viper.GetBool(name + "Enabled") {
+	if sViper.GetBool(name + "Enabled") {
 		// Viper only supports watching one config file at the moment (cf issue #631)
 		// Set up an additional viper for this list
 		localViper := viper.New()
 		localViper.SetConfigType("yaml")
-		localViper.SetConfigName(viper.GetString(name + "File"))
+		localViper.SetConfigName(sViper.GetString(name + "File"))
 		localViper.AddConfigPath(path)
 		localViper.AddConfigPath("/etc/autoygg/")
 		localViper.AddConfigPath("$HOME/.autoygg")
@@ -564,10 +578,10 @@ func initializeViperList(name string, path string, list *map[string]acl) {
 		err := localViper.ReadInConfig()
 		if err != nil {
 			if _, ok := err.(viper.ConfigFileNotFoundError); ok {
-				fmt.Printf("Warning: config file `%s.yaml` not found\n", viper.GetString(name+"File"))
+				fmt.Printf("Warning: config file `%s.yaml` not found\n", sViper.GetString(name+"File"))
 				err = nil
 			} else {
-				Fatal(fmt.Sprintf("while reading config file `%s.yaml`: %s\n", viper.GetString(name+"File"), err.Error()))
+				Fatal(fmt.Sprintf("while reading config file `%s.yaml`: %s\n", sViper.GetString(name+"File"), err.Error()))
 			}
 		} else {
 			*list = loadList(name, localViper)
@@ -584,13 +598,13 @@ func initializeViperList(name string, path string, list *map[string]acl) {
 func loadList(name string, localViper *viper.Viper) map[string]acl {
 	list := make(map[string]acl)
 	var slice []acl
-	if !viper.GetBool(name + "Enabled") {
+	if !sViper.GetBool(name + "Enabled") {
 		fmt.Printf("%sEnabled is not set", name)
 		return list
 	}
 	err := localViper.UnmarshalKey("accesslist", &slice)
 	if err != nil {
-		Fatal(fmt.Sprintf("while reading config file `%s.yaml`: %s\n", viper.GetString(name+"File"), err.Error()))
+		Fatal(fmt.Sprintf("while reading config file `%s.yaml`: %s\n", sViper.GetString(name+"File"), err.Error()))
 	}
 	for _, v := range slice {
 		if ValidYggdrasilAddress(v.YggIP) {
@@ -668,13 +682,13 @@ func ipForwardingWorker(payload string) (err error) {
 }
 
 func firewallRulesWorker(action string, commandName string) (err error) {
-	cmd := viper.GetString(action + commandName)
-	cmd = strings.Replace(cmd, "%%YggdrasilInterface%%", viper.GetString("YggdrasilInterface"), -1)
-	cmd = strings.Replace(cmd, "%%GatewayWanInterface%%", viper.GetString("GatewayWanInterface"), -1)
+	cmd := sViper.GetString(action + commandName)
+	cmd = strings.Replace(cmd, "%%YggdrasilInterface%%", sViper.GetString("YggdrasilInterface"), -1)
+	cmd = strings.Replace(cmd, "%%GatewayWanInterface%%", sViper.GetString("GatewayWanInterface"), -1)
 
-	out, err := command(viper.GetString("Shell"), viper.GetString("ShellCommandArg"), cmd).CombinedOutput()
+	out, err := command(sViper.GetString("Shell"), sViper.GetString("ShellCommandArg"), cmd).CombinedOutput()
 	if err != nil {
-		err = fmt.Errorf("Unable to run `%s %s %s`: %s (%s)", viper.GetString("Shell"), viper.GetString("ShellCommandArg"), cmd, err, out)
+		err = fmt.Errorf("Unable to run `%s %s %s`: %s (%s)", sViper.GetString("Shell"), sViper.GetString("ShellCommandArg"), cmd, err, out)
 		return
 	}
 	if action == "Add" {
@@ -684,26 +698,26 @@ func firewallRulesWorker(action string, commandName string) (err error) {
 }
 
 func commandWorker(action string, commandName string, substitutes []string, ignoreListError bool) (err error) {
-	cmd := viper.GetString("List" + commandName)
+	cmd := sViper.GetString("List" + commandName)
 	for _, sub := range substitutes {
-		cmd = strings.Replace(cmd, "%%"+sub+"%%", viper.GetString(sub), -1)
+		cmd = strings.Replace(cmd, "%%"+sub+"%%", sViper.GetString(sub), -1)
 	}
 
-	out, err := command(viper.GetString("Shell"), viper.GetString("ShellCommandArg"), cmd).Output()
+	out, err := command(sViper.GetString("Shell"), sViper.GetString("ShellCommandArg"), cmd).Output()
 	// if ignoreListError is true, a failed list command is the equivalent of a list command without output
 	if !ignoreListError && err != nil {
-		err = fmt.Errorf("Unable to run `%s %s %s`: %s", viper.GetString("Shell"), viper.GetString("ShellCommandArg"), cmd, err)
+		err = fmt.Errorf("Unable to run `%s %s %s`: %s", sViper.GetString("Shell"), sViper.GetString("ShellCommandArg"), cmd, err)
 		return
 	}
 
 	if (action == "Add" && len(out) == 0) || (action == "Del" && len(out) != 0) {
-		cmd = viper.GetString(action + commandName)
+		cmd = sViper.GetString(action + commandName)
 		for _, sub := range substitutes {
-			cmd = strings.Replace(cmd, "%%"+sub+"%%", viper.GetString(sub), -1)
+			cmd = strings.Replace(cmd, "%%"+sub+"%%", sViper.GetString(sub), -1)
 		}
-		out, err = command(viper.GetString("Shell"), viper.GetString("ShellCommandArg"), cmd).CombinedOutput()
+		out, err = command(sViper.GetString("Shell"), sViper.GetString("ShellCommandArg"), cmd).CombinedOutput()
 		if err != nil {
-			err = fmt.Errorf("Unable to run `%s %s %s`: %s (%s)", viper.GetString("Shell"), viper.GetString("ShellCommandArg"), cmd, err, out)
+			err = fmt.Errorf("Unable to run `%s %s %s`: %s (%s)", sViper.GetString("Shell"), sViper.GetString("ShellCommandArg"), cmd, err, out)
 			return
 		}
 	} else {
@@ -727,12 +741,12 @@ func commandWorker(action string, commandName string, substitutes []string, igno
 // routing table, but we don't install any routes into it, so the traffic will
 // then continue to be routed by the main table.
 func ipRouteMeshTableWorker(action string, message string) (err error) {
-	dev, _, err := DiscoverLocalGateway(viper.GetString("YggdrasilInterface"))
+	dev, _, err := DiscoverLocalGateway(sViper.GetString("YggdrasilInterface"))
 	if err != nil {
 		return
 	}
-	debug("Detected gateway device is %s, while configured GatewayWanInterface is %s", dev, viper.GetString("GatewayWanInterface"))
-	if dev != viper.GetString("GatewayWanInterface") {
+	debug("Detected gateway device is %s, while configured GatewayWanInterface is %s", dev, sViper.GetString("GatewayWanInterface"))
+	if dev != sViper.GetString("GatewayWanInterface") {
 		log.Print(message)
 		err = commandWorker(action, "IpRouteTableMeshCommand", []string{"GatewayWanInterface", "RoutingTableNumber"}, true)
 	}
@@ -764,6 +778,8 @@ func loadLeases(db *gorm.DB) (err error) {
 	debug("Found %d valid leases to load\n", result.RowsAffected)
 
 	// These leases are still valid, make sure everything is configured properly
+	mutex.Lock()
+	defer mutex.Unlock()
 	for _, r := range registrations {
 		r.State = "open"
 		if result := db.Save(&r); result.Error != nil {
@@ -781,30 +797,30 @@ func loadLeases(db *gorm.DB) (err error) {
 func setup() {
 	log.Printf("Set up firewall rule Forwarding Out")
 	err := firewallRulesWorker("Add", "FirewallRuleForwardingOutCommand")
-	handleError(err, false)
+	handleError(err, sViper, false)
 	log.Printf("Set up firewall rule Forwarding In")
 	err = firewallRulesWorker("Add", "FirewallRuleForwardingInCommand")
-	handleError(err, false)
+	handleError(err, sViper, false)
 	log.Printf("Set up firewall rule Masquerading")
 	err = firewallRulesWorker("Add", "FirewallRuleMasqueradeCommand")
-	handleError(err, false)
+	handleError(err, sViper, false)
 	log.Printf("Enabling IP forwarding")
 	err = enableIPForwarding()
-	handleError(err, true)
+	handleError(err, sViper, true)
 	log.Printf("Enabling Yggdrasil tunnel routing")
 	err = enableTunnelRouting()
-	handleError(err, true)
+	handleError(err, sViper, true)
 	log.Printf("Adding Yggdrasil local subnet 0.0.0.0/0")
 	err = addLocalSubnet("0.0.0.0/0")
-	handleError(err, true)
-	log.Printf("Adding ip rule for %s/%d to table %d", viper.GetString("GatewayTunnelIP"), viper.GetInt("GatewayTunnelNetmask"), viper.GetInt("RoutingTableNumber"))
+	handleError(err, sViper, true)
+	log.Printf("Adding ip rule for %s/%d to table %d", sViper.GetString("GatewayTunnelIP"), sViper.GetInt("GatewayTunnelNetmask"), sViper.GetInt("RoutingTableNumber"))
 	err = commandWorker("Add", "IpRuleCommand", []string{"GatewayTunnelIP", "GatewayTunnelNetMask", "RoutingTableNumber"}, false)
-	handleError(err, true)
-	err = ipRouteMeshTableWorker("Add", fmt.Sprintf("Detected vpn configuration, adding mesh routing default gateway to table %d", viper.GetInt("RoutingTableNumber")))
-	handleError(err, true)
-	log.Printf("Adding tunnel IP %s/%d", viper.GetString("GatewayTunnelIP"), viper.GetInt("GatewayTunnelNetmask"))
-	err = addTunnelIP(viper.GetString("GatewayTunnelIP"), viper.GetInt("GatewayTunnelNetmask"))
-	handleError(err, true)
+	handleError(err, sViper, true)
+	err = ipRouteMeshTableWorker("Add", fmt.Sprintf("Detected vpn configuration, adding mesh routing default gateway to table %d", sViper.GetInt("RoutingTableNumber")))
+	handleError(err, sViper, true)
+	log.Printf("Adding tunnel IP %s/%d", sViper.GetString("GatewayTunnelIP"), sViper.GetInt("GatewayTunnelNetmask"))
+	err = addTunnelIP(sViper, sViper.GetString("GatewayTunnelIP"), sViper.GetInt("GatewayTunnelNetmask"))
+	handleError(err, sViper, true)
 }
 
 func tearDown() {
@@ -812,48 +828,99 @@ func tearDown() {
 		change := configChanges[i]
 		debug("Tearing down %+v\n", change)
 		if change.Name == "IpRuleCommand" {
-			log.Printf("Removing ip rule for %s/%d to table %d", viper.GetString("GatewayTunnelIP"), viper.GetInt("GatewayTunnelNetmask"), viper.GetInt("RoutingTableNumber"))
+			log.Printf("Removing ip rule for %s/%d to table %d", sViper.GetString("GatewayTunnelIP"), sViper.GetInt("GatewayTunnelNetmask"), sViper.GetInt("RoutingTableNumber"))
 			err := commandWorker("Del", "IpRuleCommand", []string{"GatewayTunnelIP", "GatewayTunnelNetMask", "RoutingTableNumber"}, false)
-			handleError(err, true)
+			handleError(err, sViper, true)
 		} else if change.Name == "IpRouteTableMeshCommand" {
-			log.Printf("Removing mesh routing default gateway from table %d", viper.GetInt("RoutingTableNumber"))
+			log.Printf("Removing mesh routing default gateway from table %d", sViper.GetInt("RoutingTableNumber"))
 			err := commandWorker("Del", "IpRouteTableMeshCommand", []string{"GatewayWanInterface", "RoutingTableNumber"}, false)
-			handleError(err, true)
+			handleError(err, sViper, true)
 		} else if change.Name == "TunnelIP" {
-			log.Printf("Removing tunnel IP %s/%d", viper.GetString("GatewayTunnelIP"), viper.GetInt("GatewayTunnelNetmask"))
-			err := removeTunnelIP(viper.GetString("GatewayTunnelIP"), viper.GetInt("GatewayTunnelNetmask"))
-			handleError(err, true)
+			log.Printf("Removing tunnel IP %s/%d", sViper.GetString("GatewayTunnelIP"), sViper.GetInt("GatewayTunnelNetmask"))
+			err := removeTunnelIP(sViper, sViper.GetString("GatewayTunnelIP"), sViper.GetInt("GatewayTunnelNetmask"))
+			handleError(err, sViper, true)
 		} else if change.Name == "LocalSubnet" {
 			log.Printf("Removing Yggdrasil local subnet 0.0.0.0/0")
 			err := removeLocalSubnet("0.0.0.0/0")
-			handleError(err, true)
+			handleError(err, sViper, true)
 		} else if change.Name == "TunnelRouting" {
 			log.Printf("Disabling Yggdrasil tunnel routing")
 			err := disableTunnelRouting()
-			handleError(err, true)
+			handleError(err, sViper, true)
 		} else if change.Name == "IPForwarding" {
 			log.Printf("Disabling IP forwarding")
 			err := disableIPForwarding()
-			handleError(err, true)
+			handleError(err, sViper, true)
 		} else if change.Name == "FirewallRuleForwardingOutCommand" {
 			log.Printf("Disabling FirewallRuleForwardingOut")
 			err := firewallRulesWorker("Del", change.Name)
-			handleError(err, true)
+			handleError(err, sViper, true)
 		} else if change.Name == "FirewallRuleForwardingInCommand" {
 			log.Printf("Disabling FirewallRuleForwardingIn")
 			err := firewallRulesWorker("Del", change.Name)
-			handleError(err, true)
+			handleError(err, sViper, true)
 		} else if change.Name == "FirewallRuleMasqueradeCommand" {
 			log.Printf("Disabling FirewallRuleMasquerade")
 			err := firewallRulesWorker("Del", change.Name)
-			handleError(err, true)
+			handleError(err, sViper, true)
 		}
 	}
 }
 
+// expireLeases runs in the background and makes sure to remove Yggdrasil's
+// remote subnet for expired leases.
+func expireLeases(db *gorm.DB, mutex *sync.Mutex) {
+	ticker := time.NewTicker(5 * time.Second)
+	for t := range ticker.C {
+		debug("Wakeup at %s\n", t.Format("2006-01-02 15:04:05"))
+		expireLeasesWorker(db, mutex)
+	}
+}
+
+// expireLeasesWorker is a separate function to facilitate testing
+func expireLeasesWorker(db *gorm.DB, mutex *sync.Mutex) {
+	mutex.Lock()
+	var registrations []registration
+	// FIXME this uses a sqlite-ism for the timestamp comparison
+	result := db.Model(&registration{}).Where("state = 'success' and datetime(lease_expires) <= datetime('now')").Find(&registrations)
+	if result.Error != nil {
+		incErrorCount("internal")
+		log.Println("Internal error, unable to execute query:", result.Error)
+		mutex.Unlock()
+		return
+	}
+	debug("Found %d leases to expire\n", result.RowsAffected)
+	log.Printf("Found %d leases to expire\n", result.RowsAffected)
+
+	// These leases are expired, mark them as such and make sure that Yggdrasil doesn't route them anymore
+	for _, r := range registrations {
+		r.State = "expired"
+		if result := db.Save(&r); result.Error != nil {
+			incErrorCount("internal")
+			log.Println("Internal error, unable to execute query:", result.Error)
+			mutex.Unlock()
+			continue
+		}
+		debug("Removing remote subnet for registration %+v\n", r)
+		err := removeRemoteSubnet(sViper, r.ClientIP+"/32", r.PublicKey)
+		if err != nil {
+			incErrorCount("internal")
+			log.Println("Internal error, unable to execute query:", result.Error)
+		}
+
+		if result := db.Delete(&r); result.Error != nil {
+			incErrorCount("internal")
+			log.Println("Internal error, unable to execute query:", result.Error)
+			continue
+		}
+	}
+	mutex.Unlock()
+}
+
 // ServerMain is the main() function for the server program
 func ServerMain() {
-	setupLogWriters()
+	sViper = viper.New()
+	setupLogWriters(sViper)
 
 	// Enable the Prometheus endpoint
 	enablePrometheus = true
@@ -864,37 +931,37 @@ func ServerMain() {
 	// This has the advantage that --help and --version are already handled
 	// at this point, so these calls won't error out if yggdrasil is not
 	// installed or the user doesn't have enough permissions to talk to it.
-	if viper.GetString("GatewayPublicKey") == "" {
+	if sViper.GetString("GatewayPublicKey") == "" {
 		gatewayPublicKey, err := getSelfPublicKey()
 		if err != nil {
 			incErrorCount("yggdrasil")
 			fmt.Printf("Error: unable to run yggdrasilctl: %s\n", err)
 			os.Exit(1)
 		} else {
-			viper.Set("GatewayPublicKey", gatewayPublicKey)
+			sViper.Set("GatewayPublicKey", gatewayPublicKey)
 		}
 	}
 
-	if viper.GetBool("DumpConfig") {
-		fmt.Print(dumpConfiguration("server"))
+	if sViper.GetBool("DumpConfig") {
+		fmt.Print(dumpConfiguration(sViper, "server"))
 		os.Exit(0)
 	}
-	debug(dumpConfiguration("server"))
+	debug(dumpConfiguration(sViper, "server"))
 
-	if viper.GetString("StateDir") == "" {
+	if sViper.GetString("StateDir") == "" {
 		fmt.Println("Error: StateDir must not be empty. Please check the configuration file.")
 		serverUsage(fs)
 		os.Exit(1)
 	}
 
-	if _, err := os.Stat(viper.GetString("StateDir")); os.IsNotExist(err) {
-		err = os.MkdirAll(viper.GetString("StateDir"), os.FileMode(0700))
+	if _, err := os.Stat(sViper.GetString("StateDir")); os.IsNotExist(err) {
+		err = os.MkdirAll(sViper.GetString("StateDir"), os.FileMode(0700))
 		if err != nil {
 			Fatal(err)
 		}
 	}
 
-	db := setupDB("sqlite3", viper.GetString("StateDir")+"/autoygg.db")
+	db := setupDB("sqlite3", sViper.GetString("StateDir")+"/autoygg.db")
 	defer db.Close()
 	r := setupRouter(db)
 
@@ -905,14 +972,16 @@ func ServerMain() {
 		Fatal(err)
 	}
 
+	go expireLeases(db, &mutex)
+
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
 
 	go func() {
-		err := r.Run("[" + viper.GetString("ListenHost") + "]:" + viper.GetString("ListenPort"))
+		err := r.Run("[" + sViper.GetString("ListenHost") + "]:" + sViper.GetString("ListenPort"))
 		if err != nil {
 			log.Print("Starting autoygg server daemon")
-			handleError(err, false)
+			handleError(err, sViper, false)
 		}
 	}()
 	<-sig

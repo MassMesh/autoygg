@@ -20,6 +20,8 @@ import (
 	"github.com/spf13/viper"
 )
 
+var cViper *viper.Viper
+
 type state struct {
 	State                     string                  `json:"state"`
 	DesiredState              string                  `json:"desiredstate"`
@@ -53,7 +55,7 @@ func logAndExit(message string, exitcode int) {
 		Error: message,
 	}
 	text := "Error: " + message + "\n"
-	if viper.GetBool("Json") {
+	if cViper.GetBool("Json") {
 		tmp, err := json.Marshal(Output)
 		if err != nil {
 			Fatal(err)
@@ -83,16 +85,16 @@ func doRequestWorker(fs *flag.FlagSet, verb string, action string, gatewayHost s
 	if !validActions[action] {
 		err = errors.New("Invalid action: " + action)
 		// Invalid action is a fatal error, abort here
-		handleError(err, true)
+		handleError(err, cViper, true)
 	}
 	var r registration
 	r.PublicKey, err = getSelfPublicKey()
 	if err != nil {
 		return
 	}
-	r.ClientName = viper.GetString("clientname")
-	r.ClientEmail = viper.GetString("clientemail")
-	r.ClientPhone = viper.GetString("clientphone")
+	r.ClientName = cViper.GetString("clientname")
+	r.ClientEmail = cViper.GetString("clientemail")
+	r.ClientPhone = cViper.GetString("clientphone")
 	r.ClientVersion = version
 	req, err := json.Marshal(r)
 	if err != nil {
@@ -123,7 +125,7 @@ func clientSetupRoutes(clientIP string, clientNetMask int, clientGateway string,
 	newState.Error = ""
 	log.Printf("Enabling Yggdrasil tunnel routing")
 	err = enableTunnelRouting()
-	handleError(err, false)
+	handleError(err, cViper, false)
 	if err != nil {
 		newState.Error += err.Error() + "\n"
 		saveState(State)
@@ -136,21 +138,21 @@ func clientSetupRoutes(clientIP string, clientNetMask int, clientGateway string,
 
 	log.Printf("Adding Yggdrasil local subnet 0.0.0.0/0")
 	err = addLocalSubnet("0.0.0.0/0")
-	handleError(err, false)
+	handleError(err, cViper, false)
 	if err != nil {
 		newState.Error += err.Error() + "\n"
 	}
 
 	log.Printf("Adding tunnel IP %s/%d", clientIP, clientNetMask)
-	err = addTunnelIP(clientIP, clientNetMask)
-	handleError(err, false)
+	err = addTunnelIP(cViper, clientIP, clientNetMask)
+	handleError(err, cViper, false)
 	if err != nil {
 		newState.Error += err.Error() + "\n"
 	}
 
 	log.Printf("Adding Yggdrasil remote subnet 0.0.0.0/0")
-	err = addRemoteSubnet("0.0.0.0/0", publicKey)
-	handleError(err, false)
+	err = addRemoteSubnet(cViper, "0.0.0.0/0", publicKey)
+	handleError(err, cViper, false)
 	if err != nil {
 		newState.Error += err.Error() + "\n"
 	}
@@ -158,7 +160,7 @@ func clientSetupRoutes(clientIP string, clientNetMask int, clientGateway string,
 	// Make sure we route traffic to our Yggdrasil peer(s) to the wan default gateway
 	log.Printf("Getting Yggdrasil peers")
 	peers, err := yggdrasilPeers()
-	handleError(err, false)
+	handleError(err, cViper, false)
 	if err != nil {
 		newState.Error += err.Error() + "\n"
 	}
@@ -168,7 +170,7 @@ func clientSetupRoutes(clientIP string, clientNetMask int, clientGateway string,
 		log.Printf("Adding Yggdrasil peer route for %s via %s", p, defaultGatewayIP)
 		var change bool
 		change, err = addPeerRoute(p, defaultGatewayIP, defaultGatewayDev)
-		handleError(err, false)
+		handleError(err, cViper, false)
 		if err != nil {
 			// If we can't add a route for all yggdrasil peers, something is really wrong and we should abort.
 			// Because if we change the default gateway, we will be cutting ourselves off from the internet.
@@ -186,7 +188,7 @@ func clientSetupRoutes(clientIP string, clientNetMask int, clientGateway string,
 
 	log.Printf("Adding default gateway pointing at %s", clientGateway)
 	err = addDefaultGateway(clientGateway)
-	handleError(err, false)
+	handleError(err, cViper, false)
 	if err != nil {
 		newState.Error += err.Error() + "\n"
 	}
@@ -204,18 +206,18 @@ func clientTearDownRoutes(clientIP string, clientNetMask int, clientGateway stri
 	newState.Error = ""
 	log.Printf("Removing default gateway pointing at %s", clientGateway)
 	err = removeDefaultGateway(State.OriginalDefaultGatewayIP)
-	handleError(err, false)
+	handleError(err, cViper, false)
 	if err != nil {
 		newState.Error += err.Error() + "\n"
 	}
 
 	log.Printf("Getting Yggdrasil peers from state file")
-	handleError(nil, false)
+	handleError(nil, cViper, false)
 	for p := range State.PeerRoutes {
 		log.Printf("Removing Yggdrasil peer route for %s", p)
 		var change bool
 		change, err = removePeerRoute(p)
-		handleError(err, false)
+		handleError(err, cViper, false)
 		if err != nil {
 			newState.Error += err.Error() + "\n"
 		}
@@ -225,29 +227,29 @@ func clientTearDownRoutes(clientIP string, clientNetMask int, clientGateway stri
 	}
 
 	log.Printf("Removing Yggdrasil remote subnet 0.0.0.0/0")
-	err = removeRemoteSubnet("0.0.0.0/0", publicKey)
-	handleError(err, false)
+	err = removeRemoteSubnet(cViper, "0.0.0.0/0", publicKey)
+	handleError(err, cViper, false)
 	if err != nil {
 		newState.Error += err.Error() + "\n"
 	}
 
 	log.Printf("Removing tunnel IP %s/%d", clientIP, clientNetMask)
-	err = removeTunnelIP(clientIP, clientNetMask)
-	handleError(err, false)
+	err = removeTunnelIP(cViper, clientIP, clientNetMask)
+	handleError(err, cViper, false)
 	if err != nil {
 		newState.Error += err.Error() + "\n"
 	}
 
 	log.Printf("Removing Yggdrasil local subnet 0.0.0.0/0")
 	err = removeLocalSubnet("0.0.0.0/0")
-	handleError(err, false)
+	handleError(err, cViper, false)
 	if err != nil {
 		newState.Error += err.Error() + "\n"
 	}
 
 	log.Printf("Disabling Yggdrasil tunnel routing")
 	err = disableTunnelRouting()
-	handleError(err, false)
+	handleError(err, cViper, false)
 	newState.TunnelRouting = false
 	newState.State = "registered"
 	if err != nil {
@@ -259,22 +261,22 @@ func clientTearDownRoutes(clientIP string, clientNetMask int, clientGateway stri
 
 func clientLoadConfig(path string) {
 	config := "client"
-	if viper.Get("CONFIG") != nil {
-		config = viper.Get("CONFIG").(string)
+	if cViper.Get("CONFIG") != nil {
+		config = cViper.Get("CONFIG").(string)
 	}
 
 	// Load the main config file
-	viper.SetConfigType("yaml")
-	viper.SetConfigName(config)
+	cViper.SetConfigType("yaml")
+	cViper.SetConfigName(config)
 	if path == "" {
-		viper.AddConfigPath("/etc/autoygg/")
-		viper.AddConfigPath("$HOME/.autoygg")
-		viper.AddConfigPath(".")
+		cViper.AddConfigPath("/etc/autoygg/")
+		cViper.AddConfigPath("$HOME/.autoygg")
+		cViper.AddConfigPath(".")
 	} else {
 		// For testing
-		viper.AddConfigPath(path)
+		cViper.AddConfigPath(path)
 	}
-	err := viper.ReadInConfig()
+	err := cViper.ReadInConfig()
 	if _, ok := err.(viper.ConfigFileNotFoundError); ok {
 		// The client config file is optional
 		err = nil
@@ -313,9 +315,9 @@ func clientCreateFlagSet() (fs *flag.FlagSet) {
 		Fatal(err)
 	}
 
-	viperLoadSharedDefaults()
+	viperLoadSharedDefaults(cViper)
 
-	err = viper.BindPFlags(fs)
+	err = cViper.BindPFlags(fs)
 	if err != nil {
 		Fatal(err)
 	}
@@ -324,7 +326,7 @@ func clientCreateFlagSet() (fs *flag.FlagSet) {
 }
 
 func renewLease(fs *flag.FlagSet, State state) (newState state) {
-	_, newState, _ = doRequest(fs, "renew", viper.GetString("GatewayHost"), viper.GetString("GatewayPort"), State)
+	_, newState, _ = doRequest(fs, "renew", cViper.GetString("GatewayHost"), cViper.GetString("GatewayPort"), State)
 	return
 }
 
@@ -357,16 +359,16 @@ func doRequest(fs *flag.FlagSet, action string, gatewayHost string, gatewayPort 
 	log.Printf("Sending `" + action + "` request to autoygg")
 	response, err := doRequestWorker(fs, "post", action, gatewayHost, gatewayPort)
 	if err != nil {
-		handleError(err, false)
+		handleError(err, cViper, false)
 		return
 	}
 	debug("Raw server response:\n\n%s\n\n", string(response))
 	err = json.Unmarshal(response, &r)
-	handleError(err, false)
+	handleError(err, cViper, false)
 	if err != nil {
 		// Only abort when we are not trying to release a lease
 		newState.Error = err.Error()
-		if viper.GetString("Action") != "release" {
+		if cViper.GetString("Action") != "release" {
 			saveState(newState)
 			return
 		}
@@ -377,7 +379,7 @@ func doRequest(fs *flag.FlagSet, action string, gatewayHost string, gatewayPort 
 		newState.GatewayHost = gatewayHost
 		newState.GatewayPort = gatewayPort
 		newState.GatewayPublicKey = r.GatewayPublicKey
-		newState.YggdrasilInterface = viper.GetString("YggdrasilInterface")
+		newState.YggdrasilInterface = cViper.GetString("YggdrasilInterface")
 		newState.ClientIP = r.ClientIP
 		newState.ClientNetMask = r.ClientNetMask
 		newState.ClientGateway = r.ClientGateway
@@ -395,7 +397,7 @@ func doRequest(fs *flag.FlagSet, action string, gatewayHost string, gatewayPort 
 func loadState(origState state) (State state, err error) {
 	// FIXME add mutex
 	State = origState
-	path := viper.GetString("StateDir") + "/client-state.json"
+	path := cViper.GetString("StateDir") + "/client-state.json"
 	stateFile, err := ioutil.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -419,8 +421,8 @@ func saveState(State state) {
 		return
 	}
 
-	path := viper.GetString("StateDir") + "/client-state.json"
-	err = os.MkdirAll(viper.GetString("StateDir"), os.ModePerm)
+	path := cViper.GetString("StateDir") + "/client-state.json"
+	err = os.MkdirAll(cViper.GetString("StateDir"), os.ModePerm)
 	if err != nil {
 		debug(err.Error())
 		return
@@ -434,23 +436,23 @@ func saveState(State state) {
 func clientValidateConfig() (fs *flag.FlagSet) {
 	fs = clientCreateFlagSet()
 
-	if viper.GetBool("UseConfig") {
-		viper.SetConfigType("yaml")
-		viper.SetConfigName("client")
+	if cViper.GetBool("UseConfig") {
+		cViper.SetConfigType("yaml")
+		cViper.SetConfigName("client")
 		// Read the configuration from stdin.
-		err := viper.ReadConfig(os.Stdin)
+		err := cViper.ReadConfig(os.Stdin)
 		if err != nil {
 			Fatal(err)
 		}
-	} else if viper.GetBool("UseUCI") {
-		viper.SetConfigType("yaml")
-		viper.SetConfigName("client")
+	} else if cViper.GetBool("UseUCI") {
+		cViper.SetConfigType("yaml")
+		cViper.SetConfigName("client")
 		// Read the configuration by executing `autoygguci get`. Used on openwrt.
-		out, err := command(viper.GetString("Shell"), viper.GetString("ShellCommandArg"), "autoygguci get").Output()
+		out, err := command(cViper.GetString("Shell"), cViper.GetString("ShellCommandArg"), "autoygguci get").Output()
 		if err != nil {
 			Fatal(err)
 		}
-		err = viper.ReadConfig(bytes.NewBuffer(out))
+		err = cViper.ReadConfig(bytes.NewBuffer(out))
 		if err != nil {
 			Fatal(err)
 		}
@@ -458,27 +460,27 @@ func clientValidateConfig() (fs *flag.FlagSet) {
 		clientLoadConfig("")
 	}
 
-	if viper.GetBool("Debug") {
+	if cViper.GetBool("Debug") {
 		debug = debugLog.Printf
 	}
 
-	if viper.GetBool("State") || viper.GetString("Action") == "info" {
+	if cViper.GetBool("State") || cViper.GetString("Action") == "info" {
 		// These arguments imply json output
-		viper.Set("Json", true)
+		cViper.Set("Json", true)
 	}
 
-	if viper.GetBool("Help") {
+	if cViper.GetBool("Help") {
 		clientUsage(fs)
 		os.Exit(0)
 	}
 
-	if viper.GetBool("Version") {
+	if cViper.GetBool("Version") {
 		fmt.Println(version)
 		os.Exit(0)
 	}
 
-	if viper.GetBool("DumpConfig") {
-		fmt.Print(dumpConfiguration("client"))
+	if cViper.GetBool("DumpConfig") {
+		fmt.Print(dumpConfiguration(cViper, "client"))
 		os.Exit(0)
 	}
 
@@ -486,10 +488,10 @@ func clientValidateConfig() (fs *flag.FlagSet) {
 }
 
 func handleInfo(fs *flag.FlagSet) {
-	i, err := doInfoRequest(fs, viper.GetString("GatewayHost"), viper.GetString("GatewayPort"))
+	i, err := doInfoRequest(fs, cViper.GetString("GatewayHost"), cViper.GetString("GatewayPort"))
 	if err != nil {
 		if os.IsTimeout(err) {
-			logAndExit(fmt.Sprintf("Timeout: could not connect to gateway at %s", viper.GetString("GatewayHost")), 1)
+			logAndExit(fmt.Sprintf("Timeout: could not connect to gateway at %s", cViper.GetString("GatewayHost")), 1)
 		} else {
 			logAndExit(err.Error(), 1)
 		}
@@ -504,7 +506,8 @@ func handleInfo(fs *flag.FlagSet) {
 
 // ClientMain is the main() function for the client program
 func ClientMain() {
-	setupLogWriters()
+	cViper = viper.New()
+	setupLogWriters(cViper)
 
 	fs := clientValidateConfig()
 
@@ -516,7 +519,7 @@ func ClientMain() {
 	}
 	State.ClientVersion = version
 
-	if viper.GetBool("State") {
+	if cViper.GetBool("State") {
 		json, err := json.MarshalIndent(State, "", "  ")
 		if err != nil {
 			logAndExit(fmt.Sprintf("Error: %s", err), 1)
@@ -525,19 +528,19 @@ func ClientMain() {
 		os.Exit(0)
 	}
 
-	if viper.GetString("GatewayHost") == "" {
+	if cViper.GetString("GatewayHost") == "" {
 		logAndExit("GatewayHost is not defined", 0)
 	}
 
-	if viper.GetString("Action") == "" {
+	if cViper.GetString("Action") == "" {
 		logAndExit("Action is not defined", 0)
 	}
 
-	if viper.GetString("Action") == "info" {
+	if cViper.GetString("Action") == "info" {
 		handleInfo(fs)
-	} else if viper.GetString("Action") == "register" {
+	} else if cViper.GetString("Action") == "register" {
 		State.DesiredState = "connected"
-	} else if viper.GetString("Action") == "release" {
+	} else if cViper.GetString("Action") == "release" {
 		State.DesiredState = "disconnected"
 		State, err = clientTearDownRoutes(State.ClientIP, State.ClientNetMask, State.ClientGateway, State.GatewayPublicKey, State)
 		if err != nil {
@@ -553,8 +556,8 @@ func ClientMain() {
 	}
 	var r registration
 	for {
-		r, State, err = doRequest(fs, viper.GetString("Action"), viper.GetString("GatewayHost"), viper.GetString("GatewayPort"), State)
-		if err != nil && viper.GetBool("Daemon") {
+		r, State, err = doRequest(fs, cViper.GetString("Action"), cViper.GetString("GatewayHost"), cViper.GetString("GatewayPort"), State)
+		if err != nil && cViper.GetBool("Daemon") {
 			d := b.Duration()
 			time.Sleep(d)
 			continue
@@ -570,11 +573,15 @@ func ClientMain() {
 		logAndExit(err.Error(), 1)
 	}
 
-	if viper.GetString("Action") == "register" {
-		gatewayDev := viper.GetString("DefaultGatewayDev")
-		gatewayIP := viper.GetString("DefaultGatewayIP")
+	if cViper.GetString("Action") == "register" {
+		gatewayDev := cViper.GetString("DefaultGatewayDev")
+		gatewayIP := cViper.GetString("DefaultGatewayIP")
 		if gatewayIP == "" {
-			tmpDev, tmpIP, err := DiscoverLocalGateway(State.YggdrasilInterface)
+			YggdrasilInterface := State.YggdrasilInterface
+			if YggdrasilInterface == "" {
+				YggdrasilInterface = cViper.GetString("YggdrasilInterface")
+			}
+			tmpDev, tmpIP, err := DiscoverLocalGateway(YggdrasilInterface)
 			if err != nil {
 				Fatal(err)
 			}
@@ -588,13 +595,13 @@ func ClientMain() {
 		}
 	}
 
-	if viper.GetBool("Daemon") && viper.GetString("Action") == "register" {
+	if cViper.GetBool("Daemon") && cViper.GetString("Action") == "register" {
 		log.Printf("Set up cron job to renew lease every 30 minutes")
 		c := cron.New()
 		_, err := c.AddFunc("CRON_TZ=UTC */30 * * * *", func() {
 			State = renewLease(fs, State)
 		})
-		handleError(err, false)
+		handleError(err, cViper, false)
 		if err != nil {
 			Fatal("Couldn't set up cron job!")
 		}
@@ -605,6 +612,6 @@ func ClientMain() {
 		fmt.Fprint(os.Stderr, "\r") // Overwrite any ^C that may have been printed on the screen
 		State.DesiredState = "disconnected"
 		State, _ = clientTearDownRoutes(r.ClientIP, r.ClientNetMask, r.ClientGateway, r.GatewayPublicKey, State)
-		_, _, _ = doRequest(fs, "release", viper.GetString("GatewayHost"), viper.GetString("GatewayPort"), State)
+		_, _, _ = doRequest(fs, "release", cViper.GetString("GatewayHost"), cViper.GetString("GatewayPort"), State)
 	}
 }
