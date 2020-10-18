@@ -551,13 +551,11 @@ func serverLoadConfig(path string) (fs *flag.FlagSet) {
 		} else {
 			debug = func(string, ...interface{}) {}
 		}
-		var conf []byte
-		if err := sViper.Unmarshal(&conf); err != nil {
-			log.Println(err.Error())
-		} else {
-			fmt.Println("Config file changed:", e.Name)
-		}
-		fmt.Println(dumpConfiguration(sViper, "server"))
+		log.Println("Config file changed:", e.Name)
+		debug("Current configuration:")
+		debug("+=+=+=+=+=+=+=+=+=+=+=")
+		debug(dumpConfiguration(sViper, "server"))
+		debug("+=+=+=+=+=+=+=+=+=+=+=")
 	})
 
 	return
@@ -587,7 +585,11 @@ func initializeViperList(name string, path string, list *map[string]acl) {
 			*list = loadList(name, localViper)
 			localViper.WatchConfig() // Automatically reload the config files when they change
 			localViper.OnConfigChange(func(e fsnotify.Event) {
-				fmt.Println("Config file changed:", e.Name)
+				log.Println("Config file changed:", e.Name)
+				debug("Current configuration:")
+				debug("+=+=+=+=+=+=+=+=+=+=+=")
+				debug(dumpConfiguration(localViper, "server"))
+				debug("+=+=+=+=+=+=+=+=+=+=+=")
 				*list = loadList(name, localViper)
 			})
 		}

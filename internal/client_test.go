@@ -72,10 +72,10 @@ func (s *Suite) SetUpSuite(c *check.C) {
 	c.Assert(err, check.Equals, nil)
 
 	// Populate a custom config file
-	writeServerConfig(c, []byte("---\nListenHost: \""+YggAddress+"\"\nListenPort: \""+GatewayPort+"\"\nStateDir: \""+serverConfigDir+"\""))
+	writeServerConfig(c, []byte("---\nListenHost: \""+YggAddress+"\"\nListenPort: "+GatewayPort+"\nStateDir: \""+serverConfigDir+"\""))
 
 	// And an empty accessList file
-	writeAccessList(c, []byte("AccessList:\n"))
+	writeAccessList(c, []byte("---\nAccessList:\n"))
 
 	StartServer(c)
 }
@@ -102,7 +102,7 @@ func writeFile(c *check.C, path string, contents []byte) {
 }
 
 func (s *Suite) TearDownSuite(c *check.C) {
-	//defer os.RemoveAll(serverConfigDir)
+	defer os.RemoveAll(serverConfigDir)
 	StopServer(c)
 }
 
@@ -196,15 +196,16 @@ func (*Suite) TestRegistration(c *check.C) {
 	State, err = loadState(State)
 	c.Assert(err, check.Equals, nil)
 
-	writeAccessList(c, []byte("AccessList:\n"))
-	writeServerConfig(c, []byte("---\nListenHost: \""+YggAddress+"\"\nListenPort: \""+GatewayPort+"\"\nStateDir: \""+serverConfigDir+"\"\n"))
+	writeAccessList(c, []byte("---\nAccessList:\n"))
+	writeServerConfig(c, []byte("---\nListenHost: \""+YggAddress+"\"\nListenPort: "+GatewayPort+"\nStateDir: \""+serverConfigDir+"\"\n"))
 
 	// Try to register when our address is not on the accesslist
 	r, State, err := doRequest(fs, "register", YggAddress, GatewayPort, State)
 	c.Assert(err, check.Equals, nil)
 	c.Assert(r.Error, check.Equals, "Registration not allowed")
 
-	writeAccessList(c, []byte("AccessList:\n  - yggip: "+YggAddress+"\n    access: true\n    comment: TestRegistration\n"))
+	// Add our address to the accesslist
+	writeAccessList(c, []byte("---\nAccessList:\n  - yggip: "+YggAddress+"\n    access: true\n    comment: TestRegistration\n"))
 
 	r, State, err = doRequest(fs, "register", YggAddress, GatewayPort, State)
 	c.Assert(err, check.Equals, nil)
@@ -250,20 +251,19 @@ func (*Suite) TestLeaseExpiration(c *check.C) {
 	var State state
 	State, err = loadState(State)
 	c.Assert(err, check.Equals, nil)
-	fmt.Println("ABOUT TO REWRITE CONFIG")
 
 	// Set LeaseTimeoutSeconds to zero seconds
-	writeServerConfig(c, []byte("---\nListenHost: \""+YggAddress+"\"\nListenPort: \""+GatewayPort+"\"\nStateDir: \""+serverConfigDir+"\"\nLeaseTimeoutSeconds: 0\n"))
-	writeAccessList(c, []byte("AccessList:\n  - yggip: "+YggAddress+"\n    access: true\n    comment: TestRegistration\n"))
+	writeServerConfig(c, []byte("---\nListenHost: \""+YggAddress+"\"\nListenPort: "+GatewayPort+"\nStateDir: \""+serverConfigDir+"\"\nLeaseTimeoutSeconds: 0\n"))
+	writeAccessList(c, []byte("---\nAccessList:\n  - yggip: "+YggAddress+"\n    access: true\n    comment: TestRegistration\n"))
 
 	r, State, err := doRequest(fs, "register", YggAddress, GatewayPort, State)
 	c.Assert(err, check.Equals, nil)
 	c.Assert(r.Error, check.Equals, "")
 
-	// Purge the expired lease (we have LeaseTimeoutSeconds configured to 0 seconds)
+	// Purge the expired lease
 	expireLeasesWorker(db, &mutex)
 
-	// Renew expired lease
+	// Try to renew expired lease
 	r, _, err = doRequest(fs, "renew", YggAddress, GatewayPort, State)
 	c.Assert(err, check.Equals, nil)
 	c.Assert(r.Error, check.Equals, "Registration not found")
