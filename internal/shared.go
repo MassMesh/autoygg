@@ -33,6 +33,7 @@ var (
 )
 
 type logWriter struct {
+	quiet bool
 }
 
 func command(name string, arg ...string) (cmd *exec.Cmd) {
@@ -42,7 +43,7 @@ func command(name string, arg ...string) (cmd *exec.Cmd) {
 }
 
 func (writer logWriter) Write(bytes []byte) (int, error) {
-	if !viper.GetBool("Quiet") {
+	if !writer.quiet {
 		// Strip the last character, it's a newline!
 		return fmt.Printf("%-70s", string(bytes[:len(bytes)-1]))
 	}
@@ -93,34 +94,34 @@ func Fatal(err interface{}) {
 	log.Fatal("Error: ", err)
 }
 
-func addTunnelIP(address string, netMask int) error {
-	return tunnelIPWorker("Add", address, netMask)
+func addTunnelIP(lViper *viper.Viper, address string, netMask int) error {
+	return tunnelIPWorker(lViper, "Add", address, netMask)
 }
 
-func removeTunnelIP(address string, netMask int) error {
-	return tunnelIPWorker("Del", address, netMask)
+func removeTunnelIP(lViper *viper.Viper, address string, netMask int) error {
+	return tunnelIPWorker(lViper, "Del", address, netMask)
 }
 
-func tunnelIPWorker(action string, address string, netMask int) (err error) {
-	cmd := viper.GetString("ListTunnelRouteCommand")
-	cmd = strings.Replace(cmd, "%%YggdrasilInterface%%", viper.GetString("YggdrasilInterface"), -1)
+func tunnelIPWorker(lViper *viper.Viper, action string, address string, netMask int) (err error) {
+	cmd := lViper.GetString("ListTunnelRouteCommand")
+	cmd = strings.Replace(cmd, "%%YggdrasilInterface%%", lViper.GetString("YggdrasilInterface"), -1)
 
-	out, err := command(viper.GetString("Shell"), viper.GetString("ShellCommandArg"), cmd).Output()
+	out, err := command(lViper.GetString("Shell"), lViper.GetString("ShellCommandArg"), cmd).Output()
 	if err != nil {
-		err = fmt.Errorf("Unable to run `%s %s %s`: %s", viper.GetString("Shell"), viper.GetString("ShellCommandArg"), cmd, err)
+		err = fmt.Errorf("Unable to run `%s %s %s`: %s", lViper.GetString("Shell"), lViper.GetString("ShellCommandArg"), cmd, err)
 		return
 	}
 
 	found := strings.Index(string(out), address+"/"+strconv.Itoa(netMask))
 
 	if (action == "Add" && found == -1) || (action == "Del" && found != -1) {
-		cmd = viper.GetString(action + "TunnelRouteCommand")
+		cmd = lViper.GetString(action + "TunnelRouteCommand")
 		cmd = strings.Replace(cmd, "%%IPAddress%%", address, -1)
 		cmd = strings.Replace(cmd, "%%NetMask%%", strconv.Itoa(netMask), -1)
-		cmd = strings.Replace(cmd, "%%YggdrasilInterface%%", viper.GetString("YggdrasilInterface"), -1)
-		out, err = command(viper.GetString("Shell"), viper.GetString("ShellCommandArg"), cmd).CombinedOutput()
+		cmd = strings.Replace(cmd, "%%YggdrasilInterface%%", lViper.GetString("YggdrasilInterface"), -1)
+		out, err = command(lViper.GetString("Shell"), lViper.GetString("ShellCommandArg"), cmd).CombinedOutput()
 		if err != nil {
-			err = fmt.Errorf("Unable to run `%s %s %s`: %s (%s)", viper.GetString("Shell"), viper.GetString("ShellCommandArg"), cmd, err, out)
+			err = fmt.Errorf("Unable to run `%s %s %s`: %s (%s)", lViper.GetString("Shell"), lViper.GetString("ShellCommandArg"), cmd, err, out)
 			return
 		}
 	}
@@ -131,15 +132,15 @@ func tunnelIPWorker(action string, address string, netMask int) (err error) {
 	return
 }
 
-func addRemoteSubnet(subnet string, publicKey string) error {
-	return remoteSubnetWorker("Add", subnet, publicKey)
+func addRemoteSubnet(lViper *viper.Viper, subnet string, publicKey string) error {
+	return remoteSubnetWorker(lViper, "Add", subnet, publicKey)
 }
 
-func removeRemoteSubnet(subnet string, publicKey string) error {
-	return remoteSubnetWorker("Del", subnet, publicKey)
+func removeRemoteSubnet(lViper *viper.Viper, subnet string, publicKey string) error {
+	return remoteSubnetWorker(lViper, "Del", subnet, publicKey)
 }
 
-func remoteSubnetWorker(action string, subnet string, publicKey string) (err error) {
+func remoteSubnetWorker(lViper *viper.Viper, action string, subnet string, publicKey string) (err error) {
 	out, err := executeYggdrasilCtl("getroutes")
 	if err != nil {
 		return
@@ -153,14 +154,14 @@ func remoteSubnetWorker(action string, subnet string, publicKey string) (err err
 		return
 	}
 
-	cmd := viper.GetString("Gateway" + action + "RemoteSubnetCommand")
+	cmd := lViper.GetString("Gateway" + action + "RemoteSubnetCommand")
 	cmd = strings.Replace(cmd, "%%Subnet%%", subnet, -1)
 	cmd = strings.Replace(cmd, "%%ClientPublicKey%%", publicKey, -1)
 
-	command := command(viper.GetString("Shell"), viper.GetString("ShellCommandArg"), cmd)
+	command := command(lViper.GetString("Shell"), lViper.GetString("ShellCommandArg"), cmd)
 	err = command.Run()
 	if err != nil {
-		err = fmt.Errorf("Unable to run `%s %s %s`: %s", viper.GetString("Shell"), viper.GetString("ShellCommandArg"), cmd, err)
+		err = fmt.Errorf("Unable to run `%s %s %s`: %s", lViper.GetString("Shell"), lViper.GetString("ShellCommandArg"), cmd, err)
 	}
 
 	return
@@ -179,7 +180,7 @@ func removePeerRoute(peer string) (bool, error) {
 }
 
 func peerRouteWorker(action string, peer string, defaultGatewayIP string, defaultGatewayDevice string) (change bool, err error) {
-	cmd := viper.GetString(action + "PeerRouteListCommand")
+	cmd := cViper.GetString(action + "PeerRouteListCommand")
 	cmd = strings.Replace(cmd, "%%Peer%%", peer, -1)
 	if action == "Add" {
 		// defaultGatewayIP and defaultGatewayDevice are only set when adding
@@ -187,9 +188,9 @@ func peerRouteWorker(action string, peer string, defaultGatewayIP string, defaul
 		cmd = strings.Replace(cmd, "%%DefaultGatewayDevice%%", defaultGatewayDevice, -1)
 	}
 
-	out, err := command(viper.GetString("Shell"), viper.GetString("ShellCommandArg"), cmd).Output()
+	out, err := command(cViper.GetString("Shell"), cViper.GetString("ShellCommandArg"), cmd).Output()
 	if err != nil {
-		err = fmt.Errorf("Unable to run `%s %s %s`: %s", viper.GetString("Shell"), viper.GetString("ShellCommandArg"), cmd, err)
+		err = fmt.Errorf("Unable to run `%s %s %s`: %s", cViper.GetString("Shell"), cViper.GetString("ShellCommandArg"), cmd, err)
 		return
 	}
 
@@ -214,8 +215,8 @@ func peerRouteWorker(action string, peer string, defaultGatewayIP string, defaul
 		}
 	}
 
-	cmd = viper.GetString(action + "PeerRouteCommand")
-	cmdNullroute := viper.GetString(action + "PeerNullRouteCommand")
+	cmd = cViper.GetString(action + "PeerRouteCommand")
+	cmdNullroute := cViper.GetString(action + "PeerNullRouteCommand")
 	cmd = strings.Replace(cmd, "%%Peer%%", peer, -1)
 	cmdNullroute = strings.Replace(cmdNullroute, "%%Peer%%", peer, -1)
 	if action == "Add" {
@@ -223,22 +224,22 @@ func peerRouteWorker(action string, peer string, defaultGatewayIP string, defaul
 		cmd = strings.Replace(cmd, "%%DefaultGatewayIP%%", defaultGatewayIP, -1)
 		cmd = strings.Replace(cmd, "%%DefaultGatewayDevice%%", defaultGatewayDevice, -1)
 	}
-	_, err = command(viper.GetString("Shell"), viper.GetString("ShellCommandArg"), cmd).Output()
+	_, err = command(cViper.GetString("Shell"), cViper.GetString("ShellCommandArg"), cmd).Output()
 	if err != nil {
-		err = fmt.Errorf("Unable to run `%s %s %s`: %s", viper.GetString("Shell"), viper.GetString("ShellCommandArg"), cmd, err)
+		err = fmt.Errorf("Unable to run `%s %s %s`: %s", cViper.GetString("Shell"), cViper.GetString("ShellCommandArg"), cmd, err)
 		return
 	}
-	_, err = command(viper.GetString("Shell"), viper.GetString("ShellCommandArg"), cmdNullroute).Output()
+	_, err = command(cViper.GetString("Shell"), cViper.GetString("ShellCommandArg"), cmdNullroute).Output()
 	if err != nil {
-		err = fmt.Errorf("Unable to run `%s %s %s`: %s", viper.GetString("Shell"), viper.GetString("ShellCommandArg"), cmdNullroute, err)
+		err = fmt.Errorf("Unable to run `%s %s %s`: %s", cViper.GetString("Shell"), cViper.GetString("ShellCommandArg"), cmdNullroute, err)
 		return
 	}
 
 	// Flush the route cache
 	cmdFlushRouteCache := "ip route flush cache"
-	_, err = command(viper.GetString("Shell"), viper.GetString("ShellCommandArg"), cmdFlushRouteCache).Output()
+	_, err = command(cViper.GetString("Shell"), cViper.GetString("ShellCommandArg"), cmdFlushRouteCache).Output()
 	if err != nil {
-		err = fmt.Errorf("Unable to run `%s %s %s`: %s", viper.GetString("Shell"), viper.GetString("ShellCommandArg"), cmdFlushRouteCache, err)
+		err = fmt.Errorf("Unable to run `%s %s %s`: %s", cViper.GetString("Shell"), cViper.GetString("ShellCommandArg"), cmdFlushRouteCache, err)
 		return
 	}
 	change = true
@@ -259,15 +260,15 @@ func removeDefaultGateway(clientGateway string) error {
 func defaultGatewayWorker(clientGateway string) (err error) {
 	var cmd string
 	if clientGateway != "0.0.0.0" {
-		cmd = viper.GetString("DefaultGatewayCommand")
+		cmd = cViper.GetString("DefaultGatewayCommand")
 	} else {
 		// We're removing the default gateway that we installed, and there was no
 		// default gateway originally, so we restore that situation.
-		cmd = viper.GetString("DelDefaultGatewayCommand")
+		cmd = cViper.GetString("DelDefaultGatewayCommand")
 	}
 	cmd = strings.Replace(cmd, "%%ClientGateway%%", clientGateway, -1)
 
-	_, err = command(viper.GetString("Shell"), viper.GetString("ShellCommandArg"), cmd).Output()
+	_, err = command(cViper.GetString("Shell"), cViper.GetString("ShellCommandArg"), cmd).Output()
 	if err != nil {
 		// We can't do a ip ro list default command, that returns all routes. Instead, just
 		// check for a duplicate route error here and suppress it.
@@ -277,7 +278,7 @@ func defaultGatewayWorker(clientGateway string) (err error) {
 			err = nil
 			return
 		}
-		err = fmt.Errorf("Unable to run `%s %s %s`: %s", viper.GetString("Shell"), viper.GetString("ShellCommandArg"), cmd, err)
+		err = fmt.Errorf("Unable to run `%s %s %s`: %s", cViper.GetString("Shell"), cViper.GetString("ShellCommandArg"), cmd, err)
 	}
 	return
 }
@@ -534,9 +535,9 @@ func getSelfPublicKey() (publicKey string, err error) {
 	return
 }
 
-func handleError(err error, terminateOnFail bool) {
+func handleError(err error, lViper *viper.Viper, terminateOnFail bool) {
 	if err != nil {
-		if !viper.GetBool("Quiet") {
+		if !lViper.GetBool("Quiet") {
 			fmt.Printf("[ FAIL ]\n")
 		}
 		fmt.Printf("Error: %s\n", err)
@@ -544,23 +545,25 @@ func handleError(err error, terminateOnFail bool) {
 			os.Exit(1)
 		}
 	} else {
-		if !viper.GetBool("Quiet") {
+		if !lViper.GetBool("Quiet") {
 			fmt.Printf("[ ok ]\n")
 		}
 	}
 }
 
-func setupLogWriters() {
+func setupLogWriters(lViper *viper.Viper) {
 	// Initialize our own logWriter that right justifies all lines at 70 characters
 	// and removes the trailing newline from log statements. Used for status lines
 	// where we want to write something, then execute a command, and follow with
 	// [ok] or [FAIL] on the same line.
 	log.SetFlags(0)
-	log.SetOutput(new(logWriter))
+	writer := new(logWriter)
+	writer.quiet = lViper.GetBool("Quiet")
+	log.SetOutput(writer)
 }
 
-func dumpConfiguration(app string) (config string) {
-	configMap := viper.AllSettings()
+func dumpConfiguration(lViper *viper.Viper, app string) (config string) {
+	configMap := lViper.AllSettings()
 	delete(configMap, "help")       // do not include the "help" flag in the config dump
 	delete(configMap, "dumpconfig") // do not include the "dumpconfig" flag in the config dump
 	delete(configMap, "version")    // do not include the "version" flag in the config dump
@@ -574,7 +577,7 @@ func dumpConfiguration(app string) (config string) {
 	var b []byte
 	var err error
 	var minimalConfigMap map[string]interface{}
-	if app == "client" && !viper.GetBool("Complete") {
+	if app == "client" && !lViper.GetBool("Complete") {
 		minimalConfigMap = make(map[string]interface{})
 		minimalConfigMap["gatewayhost"] = configMap["gatewayhost"]
 		minimalConfigMap["gatewayport"] = configMap["gatewayport"]
@@ -585,7 +588,7 @@ func dumpConfiguration(app string) (config string) {
 		minimalConfigMap["clientphone"] = configMap["clientphone"]
 		configMap = minimalConfigMap
 	}
-	if viper.GetBool("Json") {
+	if lViper.GetBool("Json") {
 		b, err = json.Marshal(configMap)
 	} else {
 		b, err = yaml.Marshal(configMap)
@@ -597,33 +600,30 @@ func dumpConfiguration(app string) (config string) {
 	return
 }
 
-func viperLoadSharedDefaults() {
-	viper.SetDefault("StateDir", "/var/lib/autoygg")
-	viper.SetDefault("Shell", "/bin/sh")
-	viper.SetDefault("ShellCommandArg", "-c")
-	viper.SetDefault("ListTunnelRouteCommand", "ip addr list %%YggdrasilInterface%%")
-	viper.SetDefault("AddTunnelRouteCommand", "ip addr add %%IPAddress%%/%%NetMask%% dev %%YggdrasilInterface%%")
-	viper.SetDefault("DelTunnelRouteCommand", "ip addr del %%IPAddress%%/%%NetMask%% dev %%YggdrasilInterface%%")
-	viper.SetDefault("AddPeerRouteListCommand", "ip ro list %%Peer%% via %%DefaultGatewayIP%% dev %%DefaultGatewayDevice%%")
-	viper.SetDefault("DelPeerRouteListCommand", "ip ro list %%Peer%%")
-	viper.SetDefault("AddPeerRouteCommand", "ip ro add %%Peer%% via %%DefaultGatewayIP%% dev %%DefaultGatewayDevice%%")
-	viper.SetDefault("AddPeerNullRouteCommand", "ip ro replace blackhole %%Peer%% metric 500")
-	viper.SetDefault("DelPeerRouteCommand", "ip ro del %%Peer%%")
-	viper.SetDefault("DelPeerNullRouteCommand", "ip ro del blackhole %%Peer%% metric 500")
-	viper.SetDefault("GatewayAddRemoteSubnetCommand", "yggdrasilctl addremotesubnet subnet=%%Subnet%% box_pub_key=%%ClientPublicKey%%")
-	viper.SetDefault("GatewayDelRemoteSubnetCommand", "yggdrasilctl removeremotesubnet subnet=%%Subnet%% box_pub_key=%%ClientPublicKey%%")
-	viper.SetDefault("DefaultGatewayCommand", "ip ro replace default via %%ClientGateway%%")
-	viper.SetDefault("DelDefaultGatewayCommand", "ip ro del default")
-	viper.SetDefault("Version", false)
+func viperLoadSharedDefaults(lViper *viper.Viper) {
+	lViper.SetDefault("StateDir", "/var/lib/autoygg")
+	lViper.SetDefault("Shell", "/bin/sh")
+	lViper.SetDefault("ShellCommandArg", "-c")
+	lViper.SetDefault("ListTunnelRouteCommand", "ip addr list %%YggdrasilInterface%%")
+	lViper.SetDefault("AddTunnelRouteCommand", "ip addr add %%IPAddress%%/%%NetMask%% dev %%YggdrasilInterface%%")
+	lViper.SetDefault("DelTunnelRouteCommand", "ip addr del %%IPAddress%%/%%NetMask%% dev %%YggdrasilInterface%%")
+	lViper.SetDefault("AddPeerRouteListCommand", "ip ro list %%Peer%% via %%DefaultGatewayIP%% dev %%DefaultGatewayDevice%%")
+	lViper.SetDefault("DelPeerRouteListCommand", "ip ro list %%Peer%%")
+	lViper.SetDefault("AddPeerRouteCommand", "ip ro add %%Peer%% via %%DefaultGatewayIP%% dev %%DefaultGatewayDevice%%")
+	lViper.SetDefault("AddPeerNullRouteCommand", "ip ro replace blackhole %%Peer%% metric 500")
+	lViper.SetDefault("DelPeerRouteCommand", "ip ro del %%Peer%%")
+	lViper.SetDefault("DelPeerNullRouteCommand", "ip ro del blackhole %%Peer%% metric 500")
+	lViper.SetDefault("GatewayAddRemoteSubnetCommand", "yggdrasilctl addremotesubnet subnet=%%Subnet%% box_pub_key=%%ClientPublicKey%%")
+	lViper.SetDefault("GatewayDelRemoteSubnetCommand", "yggdrasilctl removeremotesubnet subnet=%%Subnet%% box_pub_key=%%ClientPublicKey%%")
+	lViper.SetDefault("DefaultGatewayCommand", "ip ro replace default via %%ClientGateway%%")
+	lViper.SetDefault("DelDefaultGatewayCommand", "ip ro del default")
+	lViper.SetDefault("Version", false)
 }
 
 // DiscoverLocalGateway returns the device and IP of the default network gateway
 // borrowed from https://github.com/jackpal/gateway (3-clause BSD)
 // changed to return the gateway device as well
 func DiscoverLocalGateway(YggdrasilInterface string) (dev string, ip net.IP, err error) {
-	if YggdrasilInterface == "" {
-		YggdrasilInterface = viper.GetString("YggdrasilInterface")
-	}
 	const file = "/proc/net/route"
 	f, err := os.Open(file)
 	if err != nil {
