@@ -364,10 +364,6 @@ func yggdrasilConfigPeers(startingPeers []string) (peers []string, err error) {
 	peerRe := regexp.MustCompile(` .*?://(.*):\d+? `)
 	var conf []byte
 	err = command("which", "ygguci").Run()
-	if err != nil {
-		err = fmt.Errorf("Unable to run command `which ygguci`: %s", err)
-		return
-	}
 	if err == nil {
 		// Running on openwrt.
 		debug("Detected OpenWrt, converting `ygguci get` to yggdrasil configuration")
