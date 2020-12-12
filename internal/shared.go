@@ -204,21 +204,12 @@ func peerRouteWorker(action string, peer string, defaultGatewayIP string, defaul
 	}
 
 	if action == "Del" && !matched {
-		// The blackhole route could be the only one left. The AddPeerRouteListCommand has a via so it will never show the blackhole route.
-		blackholeMatched, err := regexp.Match(`^blackhole\s+`+peer, out)
-		if err != nil {
-			return change, err
-		}
-		if !blackholeMatched {
-			// Nothing to do!
-			return change, err
-		}
+		// Nothing to do!
+		return change, err
 	}
 
 	cmd = cViper.GetString(action + "PeerRouteCommand")
-	cmdNullroute := cViper.GetString(action + "PeerNullRouteCommand")
 	cmd = strings.Replace(cmd, "%%Peer%%", peer, -1)
-	cmdNullroute = strings.Replace(cmdNullroute, "%%Peer%%", peer, -1)
 	if action == "Add" {
 		// defaultGatewayIP and defaultGatewayDevice are only set when adding
 		cmd = strings.Replace(cmd, "%%DefaultGatewayIP%%", defaultGatewayIP, -1)
@@ -227,11 +218,6 @@ func peerRouteWorker(action string, peer string, defaultGatewayIP string, defaul
 	_, err = command(cViper.GetString("Shell"), cViper.GetString("ShellCommandArg"), cmd).Output()
 	if err != nil {
 		err = fmt.Errorf("Unable to run `%s %s %s`: %s", cViper.GetString("Shell"), cViper.GetString("ShellCommandArg"), cmd, err)
-		return
-	}
-	_, err = command(cViper.GetString("Shell"), cViper.GetString("ShellCommandArg"), cmdNullroute).Output()
-	if err != nil {
-		err = fmt.Errorf("Unable to run `%s %s %s`: %s", cViper.GetString("Shell"), cViper.GetString("ShellCommandArg"), cmdNullroute, err)
 		return
 	}
 
@@ -606,9 +592,7 @@ func viperLoadSharedDefaults(lViper *viper.Viper) {
 	lViper.SetDefault("AddPeerRouteListCommand", "ip ro list %%Peer%% via %%DefaultGatewayIP%% dev %%DefaultGatewayDevice%%")
 	lViper.SetDefault("DelPeerRouteListCommand", "ip ro list %%Peer%%")
 	lViper.SetDefault("AddPeerRouteCommand", "ip ro add %%Peer%% via %%DefaultGatewayIP%% dev %%DefaultGatewayDevice%%")
-	lViper.SetDefault("AddPeerNullRouteCommand", "ip ro replace blackhole %%Peer%% metric 500")
 	lViper.SetDefault("DelPeerRouteCommand", "ip ro del %%Peer%%")
-	lViper.SetDefault("DelPeerNullRouteCommand", "ip ro del blackhole %%Peer%% metric 500")
 	lViper.SetDefault("GatewayAddRemoteSubnetCommand", "yggdrasilctl addremotesubnet subnet=%%Subnet%% box_pub_key=%%ClientPublicKey%%")
 	lViper.SetDefault("GatewayDelRemoteSubnetCommand", "yggdrasilctl removeremotesubnet subnet=%%Subnet%% box_pub_key=%%ClientPublicKey%%")
 	lViper.SetDefault("DefaultGatewayCommand", "ip ro replace default via %%ClientGateway%%")
