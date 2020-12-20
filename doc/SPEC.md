@@ -29,20 +29,11 @@ Registration Model
       ClientName       string // Registration name (optional)
       ClientEmail      string // Registration email (optional)
       ClientPhone      string // Registration phone (optional)
-      Error            string
-      Approved         Bool
-    }
-
-Lease Model
-
-    type lease struct {
-      gorm.Model
-      YggIP            string // Client Yggdrasil IP address
-      PublicKey        string // Client Yggdrasil PublicKey
-      GatewayPublicKey string
       ClientIP         string // The tunnel IP address assigned to the client
       ClientNetMask    int    // The tunnel netmask
       ClientGateway    string
+      Error            string
+      Approved         Bool
       LeaseExpires     time.Time
     }
 
@@ -56,21 +47,34 @@ ACL Model
 
 ## Operating Modes
 ### Full Anonymous
-* Allows anybody to directly `GET /lease` to use the gateway, subject to ACL config
+* Allows anybody to do `POST /register` without sending personal information to use the gateway
+* Subject to ACL configuration
 * RequireRegistration = false
 
 ### Registration
-* Requires all gateway users to first `POST /register` to store personal information with the gateway before requesting `POST /lease`
+* Requires all users to do `POST /register` with personal information (name, phone, e-mail) to use the gateway
+* Subject to ACL configuration
 * RequireRegistration = true
 * RequireApproval = false
 
 ### Registration & Approval
-* Requires all gateway users to `POST /register` and wait for the gateway admin to manually approve the registration before the user is allowed to `POST /lease`
+* Requires all users to `POST /register` and wait for the gateway admin to manually approve the registration to use the gateway
+* Subject to ACL configuration
 * RequireRegistration = true
 * RequireApproval = true
 
+## ACL Modes
+### ACL disabled
+* Allows anyone with a valid registration to use the gateway
+* AccessListEnabled = false
+
+### ACL enabled
+* Allows only valid registrations with an ACL entry set to `access: true` to use the gateway
+* AccessListEnabled = true
+* AccessListEnabled = true
+
 ## Endpoints
-  * `GET /info`: Returns GatewayOwner, Description, RequireRegistration, ACLEnabled
+  * `GET /info`: Returns GatewayOwner, Description, RequireRegistration, RequireApproval, AccessListEnabled
   * `GET /register`:
     * Return access error if ACL check fails
     * If RequireRegistration=false: Disabled
@@ -78,13 +82,13 @@ ACL Model
   * `POST /register`:
     * Return access error if ACL check fails
     * If RequireRegistration=false, Disabled
-    * If ACLEnabled=true, apply ACLFile based on ACLMode, give access error if conditions not met
+    * If AccessListEnabled=true, apply AccessListFile, return access error if access denied
     * If RequireRegistration=true, Store registration information with Approved=false
       * Storing unapproved feels like the safer thing to do in case someone switches RequireApproval on and off
   * `POST /renew`:
     * Return access error if ACL check fails
     * If RequireRegistration=true: Deny unless approved registration found
-    * If ACLEnabled=true, apply ACLFile based on ACLMode, give access error if conditions not met
+    * If AccessListEnabled=true, apply AccessListFile, return access error if access denied
     * Assign lease, provision lease, and store in leases table
   * `POST /release`:
     * Return access error if ACL check fails

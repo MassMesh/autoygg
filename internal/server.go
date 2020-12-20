@@ -64,26 +64,20 @@ func enablePrometheusEndpoint() (p *ginprometheus.Prometheus) {
 	return
 }
 
-func registrationAllowed(address string) bool {
-	if !sViper.GetBool("RequireRegistration") {
-		// Registration is disabled. Reject.
-		debug("Registration is not required, rejecting request from %s\n", address)
-		return false
-	}
-
+func checkACL(address string) bool {
 	if sViper.GetBool("AccessListEnabled") {
 		if _, found := accesslist[address]; found && accesslist[address].Access {
 			// The address is on the accesslist. Accept.
-			debug("This address is accesslisted, accepted request from %s\n", address)
+			log.Printf("This address is accesslisted, accepted request from %s\n", address)
 			return true
+		} else {
+			log.Printf("AccessList enabled and this address is not on the access list, rejected request from %s\n", address)
+			return false
 		}
-	} else {
-		// The accesslist is disabled and registration is required. Accept.
-		debug("AccessList disabled and registration is required, accepted request from %s\n", address)
-		return true
 	}
-	debug("AccessList enabled and registration is required, address not on accesslist, rejected request from %s\n", address)
-	return false
+	// The accesslist is disabled. Accept.
+	log.Println("AccessList disabled, accepted request from", address)
+	return true
 }
 
 func registerHandler(db *gorm.DB, c *gin.Context) {
@@ -166,22 +160,19 @@ func bindRegistration(c *gin.Context) (r registration, err error) {
 
 func validateRegistration(c *gin.Context) bool {
 	// Is this address allowed to register?
-	if !registrationAllowed(c.ClientIP()) {
+	if !checkACL(c.ClientIP()) {
 		c.JSON(http.StatusForbidden, registration{Error: "Registration not allowed"})
 		c.Abort()
 		incErrorCount("registration_denied")
 		return false
 	}
+	// FIXME when RequireRegistration is set, enforce values in Name/Phone/E-mail
 	return true
 }
 
 func authorized(db *gorm.DB, c *gin.Context) (r registration, existingRegistration registration, err error) {
 	r, err = bindRegistration(c)
 	if err != nil {
-		return
-	}
-	if !validateRegistration(c) {
-		err = errors.New("Registration not allowed")
 		return
 	}
 
@@ -300,7 +291,7 @@ func newRegistrationHandler(db *gorm.DB, c *gin.Context) {
 	// new lease
 	newRegistration.LeaseExpires = time.Now().UTC().Add(time.Duration(sViper.GetInt("LeaseTimeoutSeconds")) * time.Second)
 
-	log.Printf("new registration: %+v\n", newRegistration)
+	debug("New registration: %+v\n", newRegistration)
 	mutex.Lock()
 	defer mutex.Unlock()
 	if result := db.Save(&newRegistration); result.Error != nil {
@@ -420,13 +411,15 @@ func setupRouter(db *gorm.DB) (r *gin.Engine) {
 	return
 }
 
-func setupDB(driver string, credentials string) (db *gorm.DB) {
+func setupDB(driver string, credentials string, databaseDebug bool) (db *gorm.DB) {
 	db, err := gorm.Open(driver, credentials)
 	if err != nil {
 		fmt.Printf("%s\n", err)
 		Fatal("Couldn't initialize database connection")
 	}
-	db.LogMode(true)
+	if databaseDebug {
+		db.LogMode(true)
+	}
 
 	// Migrate the schema
 	db.AutoMigrate(&registration{})
@@ -454,6 +447,7 @@ func serverLoadConfigDefaults() {
 	sViper.SetDefault("AccessListFile", "accesslist") // Name of the file that contains the accesslist. Omit .yaml extension.
 	sViper.SetDefault("YggdrasilInterface", "tun0")   // Name of the yggdrasil tunnel interface
 	sViper.SetDefault("Debug", false)
+	sViper.SetDefault("DatabaseDebug", false)
 	sViper.SetDefault("Version", false)
 	sViper.SetDefault("GatewayPublicKey", "")
 	// Set up rudimentary firewall rules that will permit
@@ -892,7 +886,6 @@ func expireLeasesWorker(db *gorm.DB, mutex *sync.Mutex) {
 		return
 	}
 	debug("Found %d leases to expire\n", result.RowsAffected)
-	log.Printf("Found %d leases to expire\n", result.RowsAffected)
 
 	// These leases are expired, mark them as such and make sure that Yggdrasil doesn't route them anymore
 	for _, r := range registrations {
@@ -922,7 +915,7 @@ func expireLeasesWorker(db *gorm.DB, mutex *sync.Mutex) {
 // ServerMain is the main() function for the server program
 func ServerMain() {
 	sViper = viper.New()
-	setupLogWriters(sViper)
+	setupLogWriters(sViper, false)
 
 	// Enable the Prometheus endpoint
 	enablePrometheus = true
@@ -963,7 +956,7 @@ func ServerMain() {
 		}
 	}
 
-	db := setupDB("sqlite3", sViper.GetString("StateDir")+"/autoygg.db")
+	db := setupDB("sqlite3", sViper.GetString("StateDir")+"/autoygg.db", sViper.GetBool("DatabaseDebug"))
 	defer db.Close()
 	r := setupRouter(db)
 

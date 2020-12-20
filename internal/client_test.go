@@ -44,7 +44,7 @@ func StartServer(c *check.C) {
 	sViper = viper.New()
 	serverLoadConfig(serverConfigDir)
 
-	db = setupDB("sqlite3", sViper.GetString("StateDir")+"/autoygg.db")
+	db = setupDB("sqlite3", sViper.GetString("StateDir")+"/autoygg.db", false)
 	r := setupRouter(db)
 
 	srv = &http.Server{
