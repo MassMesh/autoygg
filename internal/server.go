@@ -388,7 +388,6 @@ func setupRouter(db *gorm.DB) (r *gin.Engine) {
 				Location:            sViper.GetString("GatewayLocation"),
 				GatewayInfoURL:      sViper.GetString("GatewayInfoURL"),
 				RequireRegistration: sViper.GetBool("RequireRegistration"),
-				RequireApproval:     sViper.GetBool("RequireApproval"),
 				AccessListEnabled:   sViper.GetBool("AccessListEnabled"),
 				SoftwareVersion:     version,
 			}
@@ -436,7 +435,6 @@ func serverLoadConfigDefaults() {
 	sViper.SetDefault("GatewayLocation", "Physical location of the gateway")
 	sViper.SetDefault("GatewayInfoURL", "")
 	sViper.SetDefault("RequireRegistration", true)
-	sViper.SetDefault("RequireApproval", true)
 	sViper.SetDefault("MaxClients", 10)
 	sViper.SetDefault("LeaseTimeoutSeconds", 14400) // Default to 4 hours
 	sViper.SetDefault("GatewayTunnelIP", "10.42.0.1")

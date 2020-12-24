@@ -61,7 +61,6 @@ type info struct {
 	GatewayInfoURL      string
 	SoftwareVersion     string
 	RequireRegistration bool
-	RequireApproval     bool
 	AccessListEnabled   bool
 }
 

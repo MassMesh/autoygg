@@ -157,7 +157,6 @@ func (*Suite) TestInfo(c *check.C) {
 	c.Check(i.GatewayInfoURL, check.Equals, "")
 	c.Check(i.SoftwareVersion, check.Equals, "dev")
 	c.Check(i.RequireRegistration, check.Equals, true)
-	c.Check(i.RequireApproval, check.Equals, true)
 	c.Check(i.AccessListEnabled, check.Equals, true)
 }
 
