@@ -531,7 +531,7 @@ func serverLoadConfig(path string) (fs *flag.FlagSet) {
 	}
 
 	if configErr != nil {
-		Fatal(fmt.Sprintln("Fatal error reading config file:", err.Error()))
+		Fatal(fmt.Sprintln("Fatal error reading config file:", configErr.Error()))
 	}
 
 	initializeViperList("AccessList", path, &accesslist)
