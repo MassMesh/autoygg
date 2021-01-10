@@ -67,7 +67,7 @@ ACL Model
 * Allows anybody to do `POST /register` without sending personal information
 * Must wait for the gateway admin to manually approve the registration to use the gateway by adding an entry to the AccessList
 * RequireRegistration = false
-* AccessListEnabled = false
+* AccessListEnabled = true
 
 ## ACL Modes
 ### ACL disabled

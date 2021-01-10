@@ -84,10 +84,6 @@ func registerHandler(db *gorm.DB, c *gin.Context) {
 	var existingRegistration registration
 	statusCode := http.StatusOK
 
-	if !validateRegistration(c) {
-		return
-	}
-
 	if result := db.Where("ygg_ip = ?", c.ClientIP()).First(&existingRegistration); result.Error != nil {
 		// IsRecordNotFound is normal if we haven't seen this public key before
 		if gorm.IsRecordNotFoundError(result.Error) {
@@ -99,6 +95,11 @@ func registerHandler(db *gorm.DB, c *gin.Context) {
 			return
 		}
 	}
+
+	if !validateRegistration(c, existingRegistration) {
+		return
+	}
+
 	if existingRegistration.State == "pending" {
 		statusCode = http.StatusAccepted
 	} else if existingRegistration.State == "open" {
@@ -158,15 +159,25 @@ func bindRegistration(c *gin.Context) (r registration, err error) {
 	return
 }
 
-func validateRegistration(c *gin.Context) bool {
+func validateRegistration(c *gin.Context, r registration) bool {
 	// Is this address allowed to register?
 	if !checkACL(c.ClientIP()) {
 		c.JSON(http.StatusForbidden, registration{Error: "Registration not allowed"})
 		c.Abort()
-		incErrorCount("registration_denied")
+		incErrorCount("registration_denied_acl")
 		return false
 	}
-	// FIXME when RequireRegistration is set, enforce values in Name/Phone/E-mail
+	// When RequireRegistration is set, make sure there are values in Name/Phone/E-mail
+	if sViper.GetBool("RequireRegistration") {
+		if r.ClientEmail == "" ||
+			r.ClientPhone == "" ||
+			r.ClientName == "" {
+			c.JSON(http.StatusForbidden, registration{Error: "Client name, e-mail and phone must be supplied"})
+			c.Abort()
+			incErrorCount("registration_denied_missing_client_info")
+			return false
+		}
+	}
 	return true
 }
 
@@ -258,7 +269,7 @@ func newRegistrationHandler(db *gorm.DB, c *gin.Context) {
 		return
 	}
 
-	if !validateRegistration(c) {
+	if !validateRegistration(c, newRegistration) {
 		return
 	}
 
@@ -536,7 +547,6 @@ func serverLoadConfig(path string, args []string) (fs *flag.FlagSet) {
 
 	initializeViperList("AccessList", path, &accesslist)
 
-	sViper.WatchConfig() // Automatically reload the main config when it changes
 	sViper.OnConfigChange(func(e fsnotify.Event) {
 		if sViper.GetBool("Debug") {
 			debug = debugLog.Printf
@@ -549,6 +559,7 @@ func serverLoadConfig(path string, args []string) (fs *flag.FlagSet) {
 		debug(dumpConfiguration(sViper, "server"))
 		debug("+=+=+=+=+=+=+=+=+=+=+=")
 	})
+	sViper.WatchConfig() // Automatically reload the main config when it changes
 
 	return
 }
@@ -577,11 +588,15 @@ func initializeViperList(name string, path string, list *map[string]acl) {
 			*list = loadList(name, localViper)
 			localViper.WatchConfig() // Automatically reload the config files when they change
 			localViper.OnConfigChange(func(e fsnotify.Event) {
-				log.Println("Config file changed:", e.Name)
-				debug("Current configuration:")
-				debug("+=+=+=+=+=+=+=+=+=+=+=")
-				debug(dumpConfiguration(localViper, "server"))
-				debug("+=+=+=+=+=+=+=+=+=+=+=")
+				// It would be nice to dump the config here
+				log.Println(name+" file changed:", e.Name)
+				// If the configuration file that is reloaded is an access list, the localViper config object is empty
+				if name == "Config" {
+					debug("New configuration:")
+					debug("+=+=+=+=+=+=+=+=+=+=+=")
+					debug(dumpConfiguration(localViper, "server"))
+					debug("+=+=+=+=+=+=+=+=+=+=+=")
+				}
 				*list = loadList(name, localViper)
 			})
 		}
@@ -593,7 +608,7 @@ func loadList(name string, localViper *viper.Viper) map[string]acl {
 	list := make(map[string]acl)
 	var slice []acl
 	if !sViper.GetBool(name + "Enabled") {
-		fmt.Printf("%sEnabled is not set", name)
+		fmt.Printf("%sEnabled is not set\n", name)
 		return list
 	}
 	err := localViper.UnmarshalKey("accesslist", &slice)
