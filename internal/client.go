@@ -76,11 +76,11 @@ Options:
 	fmt.Fprintln(os.Stderr, "")
 }
 
-func doRequestWorker(fs *flag.FlagSet, verb string, action string, gatewayHost string, gatewayPort string) (response []byte, err error) {
+func doRequestWorker(fs *flag.FlagSet, verb string, action string, gatewayHost string, gatewayPort string, i info) (response []byte, err error) {
 	validActions := map[string]bool{
-		"register": true,
-		"renew":    true,
-		"release":  true,
+		"register": true, // register and request a lease
+		"renew":    true, // renew an existing lease
+		"release":  true, // release an existing lease
 	}
 	if !validActions[action] {
 		err = errors.New("Invalid action: " + action)
@@ -92,9 +92,12 @@ func doRequestWorker(fs *flag.FlagSet, verb string, action string, gatewayHost s
 	if err != nil {
 		return
 	}
-	r.ClientName = cViper.GetString("clientname")
-	r.ClientEmail = cViper.GetString("clientemail")
-	r.ClientPhone = cViper.GetString("clientphone")
+	// Only send ClientName, ClientEmail and ClientPhone when registration is required
+	if i.RequireRegistration {
+		r.ClientName = cViper.GetString("clientname")
+		r.ClientEmail = cViper.GetString("clientemail")
+		r.ClientPhone = cViper.GetString("clientphone")
+	}
 	r.ClientVersion = version
 	req, err := json.Marshal(r)
 	if err != nil {
@@ -285,7 +288,7 @@ func clientLoadConfig(path string) {
 	}
 }
 
-func clientCreateFlagSet() (fs *flag.FlagSet) {
+func clientCreateFlagSet(args []string) (fs *flag.FlagSet) {
 	fs = flag.NewFlagSet("Autoygg", flag.ContinueOnError)
 	fs.Usage = func() { clientUsage(fs) }
 
@@ -310,7 +313,7 @@ func clientCreateFlagSet() (fs *flag.FlagSet) {
 	fs.Bool("help", false, "print usage and exit")
 	fs.Bool("version", false, "print version and exit")
 
-	err := fs.Parse(os.Args[1:])
+	err := fs.Parse(args)
 	if err != nil {
 		Fatal(err)
 	}
@@ -334,7 +337,7 @@ func doInfoRequest(fs *flag.FlagSet, gatewayHost string, gatewayPort string) (i 
 	client := http.Client{
 		Transport: &http.Transport{
 			Dial: (&net.Dialer{
-				Timeout: 200 * time.Millisecond,
+				Timeout: 500 * time.Millisecond,
 			}).Dial,
 		},
 	}
@@ -356,8 +359,17 @@ func doInfoRequest(fs *flag.FlagSet, gatewayHost string, gatewayPort string) (i 
 
 func doRequest(fs *flag.FlagSet, action string, gatewayHost string, gatewayPort string, State state) (r registration, newState state, err error) {
 	newState = State
+
+	// Do an info request to know if registration is required
+	i, err := handleInfoWorker(fs)
+	if err != nil {
+		handleError(err, cViper, false)
+		return
+	}
+
+	verb := "post"
 	log.Printf("Sending `" + action + "` request to autoygg")
-	response, err := doRequestWorker(fs, "post", action, gatewayHost, gatewayPort)
+	response, err := doRequestWorker(fs, verb, action, gatewayHost, gatewayPort, i)
 	if err != nil {
 		handleError(err, cViper, false)
 		return
@@ -434,7 +446,7 @@ func saveState(State state) {
 }
 
 func clientValidateConfig() (fs *flag.FlagSet) {
-	fs = clientCreateFlagSet()
+	fs = clientCreateFlagSet(os.Args[1:])
 
 	if cViper.GetBool("UseConfig") {
 		cViper.SetConfigType("yaml")
@@ -487,27 +499,29 @@ func clientValidateConfig() (fs *flag.FlagSet) {
 	return
 }
 
-func handleInfo(fs *flag.FlagSet) {
-	i, err := doInfoRequest(fs, cViper.GetString("GatewayHost"), cViper.GetString("GatewayPort"))
+func handleInfoWorker(fs *flag.FlagSet) (i info, err error) {
+	i, err = doInfoRequest(fs, cViper.GetString("GatewayHost"), cViper.GetString("GatewayPort"))
 	if err != nil {
 		if os.IsTimeout(err) {
-			logAndExit(fmt.Sprintf("Timeout: could not connect to gateway at %s", cViper.GetString("GatewayHost")), 1)
-		} else {
-			logAndExit(err.Error(), 1)
+			err = fmt.Errorf("Timeout: could not connect to gateway at %s", cViper.GetString("GatewayHost"))
 		}
 	}
-	json, err := json.MarshalIndent(i, "", "  ")
+	return
+}
+
+func handleInfo(fs *flag.FlagSet, i info) {
+	infoJson, err := json.MarshalIndent(i, "", "  ")
 	if err != nil {
 		logAndExit(err.Error(), 1)
 	}
-	fmt.Printf("%s\n", json)
+	fmt.Printf("%s\n", infoJson)
 	os.Exit(0)
 }
 
 // ClientMain is the main() function for the client program
 func ClientMain() {
 	cViper = viper.New()
-	setupLogWriters(cViper)
+	setupLogWriters(cViper, true)
 
 	fs := clientValidateConfig()
 
@@ -537,14 +551,21 @@ func ClientMain() {
 	}
 
 	if cViper.GetString("Action") == "info" {
-		handleInfo(fs)
-	} else if cViper.GetString("Action") == "register" {
-		State.DesiredState = "connected"
-	} else if cViper.GetString("Action") == "release" {
-		State.DesiredState = "disconnected"
-		State, err = clientTearDownRoutes(State.ClientIP, State.ClientNetMask, State.ClientGateway, State.GatewayPublicKey, State)
+		i, err := handleInfoWorker(fs)
+		// if the 'info' request failed bail out here
 		if err != nil {
-			Fatal(err)
+			logAndExit(err.Error(), 1)
+		}
+		handleInfo(fs, i)
+	} else {
+		if cViper.GetString("Action") == "register" || cViper.GetString("Action") == "renew" {
+			State.DesiredState = "connected"
+		} else if cViper.GetString("Action") == "release" {
+			State.DesiredState = "disconnected"
+			State, err = clientTearDownRoutes(State.ClientIP, State.ClientNetMask, State.ClientGateway, State.GatewayPublicKey, State)
+			if err != nil {
+				Fatal(err)
+			}
 		}
 	}
 

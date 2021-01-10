@@ -29,6 +29,9 @@ type Suite struct{}
 
 var YggAddress string
 var serverConfigDir string
+var clientEmail string
+var clientName string
+var clientPhone string
 var srv *http.Server
 var db *gorm.DB
 
@@ -42,9 +45,9 @@ func StopServer(c *check.C) {
 
 func StartServer(c *check.C) {
 	sViper = viper.New()
-	serverLoadConfig(serverConfigDir)
+	serverLoadConfig(serverConfigDir, []string{})
 
-	db = setupDB("sqlite3", sViper.GetString("StateDir")+"/autoygg.db")
+	db = setupDB("sqlite3", sViper.GetString("StateDir")+"/autoygg.db", false)
 	r := setupRouter(db)
 
 	srv = &http.Server{
@@ -115,7 +118,7 @@ func (*Suite) TestConfigLoading(c *check.C) {
 
 	// Load default config
 	cViper = viper.New()
-	clientCreateFlagSet()
+	clientCreateFlagSet([]string{})
 
 	// Test defaults
 	c.Assert(cViper.GetBool("daemon"), check.Equals, true)
@@ -145,7 +148,11 @@ func (*Suite) TestConfigLoading(c *check.C) {
 
 func (*Suite) TestInfo(c *check.C) {
 	// Load default config
-	fs := clientCreateFlagSet()
+	cViper = viper.New()
+	fs := clientCreateFlagSet([]string{})
+
+	// Populate a custom config file
+	writeServerConfig(c, []byte("---\nListenHost: \""+YggAddress+"\"\nListenPort: "+GatewayPort+"\nStateDir: \""+serverConfigDir+"\""))
 
 	i, err := doInfoRequest(fs, YggAddress, GatewayPort)
 
@@ -157,7 +164,6 @@ func (*Suite) TestInfo(c *check.C) {
 	c.Check(i.GatewayInfoURL, check.Equals, "")
 	c.Check(i.SoftwareVersion, check.Equals, "dev")
 	c.Check(i.RequireRegistration, check.Equals, true)
-	c.Check(i.RequireApproval, check.Equals, true)
 	c.Check(i.AccessListEnabled, check.Equals, true)
 }
 
@@ -168,7 +174,7 @@ func CustomClientConfig(c *check.C) (tmpDir string) {
 	}
 
 	// Populate a custom config file
-	clientYaml := []byte("---\nGatewayHost: \"" + YggAddress + "\"\nGatewayPort: \"" + GatewayPort + "\"\nStateDir: \"" + tmpDir + "\"\n")
+	clientYaml := []byte("---\nGatewayHost: \"" + YggAddress + "\"\nGatewayPort: \"" + GatewayPort + "\"\nStateDir: \"" + tmpDir + "\"\nClientEmail: \"" + clientEmail + "\"\nClientName: \"" + clientName + "\"\nClientPhone: \"" + clientPhone + "\"")
 	configFile := filepath.Join(tmpDir, "client.yaml")
 	err = ioutil.WriteFile(configFile, clientYaml, 0644)
 	if err != nil {
@@ -179,16 +185,19 @@ func CustomClientConfig(c *check.C) (tmpDir string) {
 	return
 }
 
-func (*Suite) TestRegistration(c *check.C) {
+func (*Suite) TestRegistrationAndApproval(c *check.C) {
 	// Load default config
-	fs := clientCreateFlagSet()
+	cViper = viper.New()
+	fs := clientCreateFlagSet([]string{})
+
+	clientEmail = "test@example.com"
+	clientName = "Joe Tester"
+	clientPhone = "555-1234567"
 
 	tmpDir := CustomClientConfig(c)
 	defer os.RemoveAll(tmpDir)
 
 	// Load default config
-	cViper = viper.New()
-	clientCreateFlagSet()
 	clientLoadConfig(tmpDir)
 
 	var err error
@@ -210,6 +219,196 @@ func (*Suite) TestRegistration(c *check.C) {
 	r, State, err = doRequest(fs, "register", YggAddress, GatewayPort, State)
 	c.Assert(err, check.Equals, nil)
 	c.Assert(r.Error, check.Equals, "")
+
+	// We should have sent the personal information, double check that.
+	c.Assert(r.ClientName, check.Not(check.Equals), "")
+	c.Assert(r.ClientEmail, check.Not(check.Equals), "")
+	c.Assert(r.ClientPhone, check.Not(check.Equals), "")
+
+	loadedState, err := loadState(state{})
+	c.Assert(err, check.Equals, nil)
+	c.Assert(loadedState.State, check.Equals, "connected")
+
+	r, State, err = doRequest(fs, "renew", YggAddress, GatewayPort, State)
+	c.Assert(err, check.Equals, nil)
+	c.Assert(r.Error, check.Equals, "")
+
+	r, State, err = doRequest(fs, "release", YggAddress, GatewayPort, State)
+	c.Assert(err, check.Equals, nil)
+	c.Assert(r.Error, check.Equals, "")
+
+	loadedState, err = loadState(state{})
+	c.Assert(err, check.Equals, nil)
+	c.Assert(loadedState.State, check.Equals, "disconnected")
+
+	// Release non-existent lease
+	r, State, err = doRequest(fs, "release", YggAddress, GatewayPort, State)
+	c.Assert(err, check.Equals, nil)
+	c.Assert(r.Error, check.Equals, "Registration not found")
+
+	// Renew non-existent lease
+	r, _, err = doRequest(fs, "renew", YggAddress, GatewayPort, State)
+	c.Assert(err, check.Equals, nil)
+	c.Assert(r.Error, check.Equals, "Registration not found")
+}
+
+func (*Suite) TestRegistration(c *check.C) {
+	// Load default config
+	cViper = viper.New()
+	fs := clientCreateFlagSet([]string{})
+
+	clientEmail = "test@example.com"
+	clientName = "Joe Tester"
+	clientPhone = "555-1234567"
+
+	tmpDir := CustomClientConfig(c)
+	defer os.RemoveAll(tmpDir)
+
+	// Load default config
+	clientLoadConfig(tmpDir)
+
+	var err error
+	var State state
+	State, err = loadState(State)
+	c.Assert(err, check.Equals, nil)
+
+	writeAccessList(c, []byte("---\nAccessList:\n"))
+	writeServerConfig(c, []byte("---\nListenHost: \""+YggAddress+"\"\nListenPort: "+GatewayPort+"\nStateDir: \""+serverConfigDir+"\"\nAccessListEnabled: false\n"))
+
+	r, State, err := doRequest(fs, "register", YggAddress, GatewayPort, State)
+	c.Assert(err, check.Equals, nil)
+	c.Assert(r.Error, check.Equals, "")
+
+	// We should have sent the personal information, double check that.
+	c.Assert(r.ClientName, check.Not(check.Equals), "")
+	c.Assert(r.ClientEmail, check.Not(check.Equals), "")
+	c.Assert(r.ClientPhone, check.Not(check.Equals), "")
+
+	loadedState, err := loadState(state{})
+	c.Assert(err, check.Equals, nil)
+	c.Assert(loadedState.State, check.Equals, "connected")
+
+	r, State, err = doRequest(fs, "renew", YggAddress, GatewayPort, State)
+	c.Assert(err, check.Equals, nil)
+	c.Assert(r.Error, check.Equals, "")
+
+	r, State, err = doRequest(fs, "release", YggAddress, GatewayPort, State)
+	c.Assert(err, check.Equals, nil)
+	c.Assert(r.Error, check.Equals, "")
+
+	loadedState, err = loadState(state{})
+	c.Assert(err, check.Equals, nil)
+	c.Assert(loadedState.State, check.Equals, "disconnected")
+
+	// Release non-existent lease
+	r, State, err = doRequest(fs, "release", YggAddress, GatewayPort, State)
+	c.Assert(err, check.Equals, nil)
+	c.Assert(r.Error, check.Equals, "Registration not found")
+
+	// Renew non-existent lease
+	r, _, err = doRequest(fs, "renew", YggAddress, GatewayPort, State)
+	c.Assert(err, check.Equals, nil)
+	c.Assert(r.Error, check.Equals, "Registration not found")
+}
+
+func (*Suite) TestAnonymous(c *check.C) {
+	// Load default config
+	cViper = viper.New()
+	fs := clientCreateFlagSet([]string{})
+
+	clientEmail = ""
+	clientName = ""
+	clientPhone = ""
+
+	tmpDir := CustomClientConfig(c)
+	defer os.RemoveAll(tmpDir)
+
+	// Load default config
+	clientLoadConfig(tmpDir)
+
+	var err error
+	var State state
+	State, err = loadState(State)
+	c.Assert(err, check.Equals, nil)
+
+	writeAccessList(c, []byte("---\nAccessList:\n"))
+	writeServerConfig(c, []byte("---\nListenHost: \""+YggAddress+"\"\nListenPort: "+GatewayPort+"\nStateDir: \""+serverConfigDir+"\"\nRequireRegistration: false\nAccessListEnabled: false\n"))
+
+	r, State, err := doRequest(fs, "register", YggAddress, GatewayPort, State)
+	c.Assert(err, check.Equals, nil)
+	c.Assert(r.Error, check.Equals, "")
+
+	// We should not have sent the personal information, double check that.
+	c.Assert(r.ClientName, check.Equals, "")
+	c.Assert(r.ClientEmail, check.Equals, "")
+	c.Assert(r.ClientPhone, check.Equals, "")
+
+	loadedState, err := loadState(state{})
+	c.Assert(err, check.Equals, nil)
+	c.Assert(loadedState.State, check.Equals, "connected")
+
+	r, State, err = doRequest(fs, "renew", YggAddress, GatewayPort, State)
+	c.Assert(err, check.Equals, nil)
+	c.Assert(r.Error, check.Equals, "")
+
+	r, State, err = doRequest(fs, "release", YggAddress, GatewayPort, State)
+	c.Assert(err, check.Equals, nil)
+	c.Assert(r.Error, check.Equals, "")
+
+	loadedState, err = loadState(state{})
+	c.Assert(err, check.Equals, nil)
+	c.Assert(loadedState.State, check.Equals, "disconnected")
+
+	// Release non-existent lease
+	r, State, err = doRequest(fs, "release", YggAddress, GatewayPort, State)
+	c.Assert(err, check.Equals, nil)
+	c.Assert(r.Error, check.Equals, "Registration not found")
+
+	// Renew non-existent lease
+	r, _, err = doRequest(fs, "renew", YggAddress, GatewayPort, State)
+	c.Assert(err, check.Equals, nil)
+	c.Assert(r.Error, check.Equals, "Registration not found")
+}
+
+func (*Suite) TestAnonymousAndApproval(c *check.C) {
+	// Load default config
+	cViper = viper.New()
+	fs := clientCreateFlagSet([]string{})
+
+	clientEmail = ""
+	clientName = ""
+	clientPhone = ""
+
+	tmpDir := CustomClientConfig(c)
+	defer os.RemoveAll(tmpDir)
+
+	// Load default config
+	clientLoadConfig(tmpDir)
+
+	var err error
+	var State state
+	State, err = loadState(State)
+	c.Assert(err, check.Equals, nil)
+
+	writeAccessList(c, []byte("---\nAccessList:\n"))
+	writeServerConfig(c, []byte("---\nListenHost: \""+YggAddress+"\"\nListenPort: "+GatewayPort+"\nStateDir: \""+serverConfigDir+"\"\nRequireRegistration: false\n"))
+
+	// Try to register when our address is not on the accesslist
+	r, State, err := doRequest(fs, "register", YggAddress, GatewayPort, State)
+	c.Assert(err, check.Equals, nil)
+	c.Assert(r.Error, check.Equals, "Registration not allowed")
+
+	// Add our address to the accesslist
+	writeAccessList(c, []byte("---\nAccessList:\n  - yggip: "+YggAddress+"\n    access: true\n    comment: TestRegistration\n"))
+
+	r, State, err = doRequest(fs, "register", YggAddress, GatewayPort, State)
+	c.Assert(err, check.Equals, nil)
+	c.Assert(r.Error, check.Equals, "")
+
+	// We should not have sent the personal information, double check that.
+	c.Assert(r.ClientName, check.Equals, "")
+	c.Assert(r.ClientEmail, check.Equals, "")
+	c.Assert(r.ClientPhone, check.Equals, "")
 
 	loadedState, err := loadState(state{})
 	c.Assert(err, check.Equals, nil)
@@ -240,7 +439,7 @@ func (*Suite) TestRegistration(c *check.C) {
 
 func (*Suite) TestLeaseExpiration(c *check.C) {
 	// Load default config
-	fs := clientCreateFlagSet()
+	fs := clientCreateFlagSet([]string{})
 
 	tmpDir := CustomClientConfig(c)
 	defer os.RemoveAll(tmpDir)
@@ -253,7 +452,7 @@ func (*Suite) TestLeaseExpiration(c *check.C) {
 	c.Assert(err, check.Equals, nil)
 
 	// Set LeaseTimeoutSeconds to zero seconds
-	writeServerConfig(c, []byte("---\nListenHost: \""+YggAddress+"\"\nListenPort: "+GatewayPort+"\nStateDir: \""+serverConfigDir+"\"\nLeaseTimeoutSeconds: 0\n"))
+	writeServerConfig(c, []byte("---\nListenHost: \""+YggAddress+"\"\nListenPort: "+GatewayPort+"\nStateDir: \""+serverConfigDir+"\"\nLeaseTimeoutSeconds: 0\nRequireRegistration: false\n"))
 	writeAccessList(c, []byte("---\nAccessList:\n  - yggip: "+YggAddress+"\n    access: true\n    comment: TestRegistration\n"))
 
 	r, State, err := doRequest(fs, "register", YggAddress, GatewayPort, State)

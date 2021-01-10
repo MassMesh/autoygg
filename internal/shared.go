@@ -33,7 +33,8 @@ var (
 )
 
 type logWriter struct {
-	quiet bool
+	quiet       bool
+	interactive bool
 }
 
 func command(name string, arg ...string) (cmd *exec.Cmd) {
@@ -43,7 +44,9 @@ func command(name string, arg ...string) (cmd *exec.Cmd) {
 }
 
 func (writer logWriter) Write(bytes []byte) (int, error) {
-	if !writer.quiet {
+	if !writer.interactive && !writer.quiet {
+		return fmt.Printf("%s", string(bytes))
+	} else if !writer.quiet {
 		// Strip the last character, it's a newline!
 		return fmt.Printf("%-70s", string(bytes[:len(bytes)-1]))
 	}
@@ -58,7 +61,6 @@ type info struct {
 	GatewayInfoURL      string
 	SoftwareVersion     string
 	RequireRegistration bool
-	RequireApproval     bool
 	AccessListEnabled   bool
 }
 
@@ -533,14 +535,15 @@ func handleError(err error, lViper *viper.Viper, terminateOnFail bool) {
 	}
 }
 
-func setupLogWriters(lViper *viper.Viper) {
-	// Initialize our own logWriter that right justifies all lines at 70 characters
-	// and removes the trailing newline from log statements. Used for status lines
-	// where we want to write something, then execute a command, and follow with
-	// [ok] or [FAIL] on the same line.
+func setupLogWriters(lViper *viper.Viper, interactive bool) {
+	// Initialize our own logWriter. In 'interactive mode', it right justifies
+	// all lines at 70 characters and removes the trailing newline from log
+	// statements. Used for status lines where we want to write something, then
+	// execute a command, and follow with [ok] or [FAIL] on the same line.
 	log.SetFlags(0)
 	writer := new(logWriter)
 	writer.quiet = lViper.GetBool("Quiet")
+	writer.interactive = interactive
 	log.SetOutput(writer)
 }
 
