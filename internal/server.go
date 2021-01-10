@@ -470,7 +470,7 @@ func serverLoadConfigDefaults() {
 	sViper.SetDefault("DelIpRouteTableMeshCommand", "ip ro del default dev %%GatewayWanInterface%% table %%RoutingTableNumber%%")
 }
 
-func serverLoadConfig(path string) (fs *flag.FlagSet) {
+func serverLoadConfig(path string, args []string) (fs *flag.FlagSet) {
 	viperLoadSharedDefaults(sViper)
 	serverLoadConfigDefaults()
 
@@ -506,7 +506,7 @@ func serverLoadConfig(path string) (fs *flag.FlagSet) {
 	fs.Bool("help", false, "print usage and exit")
 	fs.Bool("version", false, "print version and exit")
 
-	err = fs.Parse(os.Args[1:])
+	err = fs.Parse(args)
 	if err != nil {
 		Fatal(err)
 	}
@@ -918,7 +918,7 @@ func ServerMain() {
 	// Enable the Prometheus endpoint
 	enablePrometheus = true
 
-	fs := serverLoadConfig("")
+	fs := serverLoadConfig("", os.Args[1:])
 
 	// if GatewayPublicKey is not set in the config, calculate it here.
 	// This has the advantage that --help and --version are already handled

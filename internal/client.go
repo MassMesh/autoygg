@@ -288,7 +288,7 @@ func clientLoadConfig(path string) {
 	}
 }
 
-func clientCreateFlagSet() (fs *flag.FlagSet) {
+func clientCreateFlagSet(args []string) (fs *flag.FlagSet) {
 	fs = flag.NewFlagSet("Autoygg", flag.ContinueOnError)
 	fs.Usage = func() { clientUsage(fs) }
 
@@ -313,7 +313,7 @@ func clientCreateFlagSet() (fs *flag.FlagSet) {
 	fs.Bool("help", false, "print usage and exit")
 	fs.Bool("version", false, "print version and exit")
 
-	err := fs.Parse(os.Args[1:])
+	err := fs.Parse(args)
 	if err != nil {
 		Fatal(err)
 	}
@@ -446,7 +446,7 @@ func saveState(State state) {
 }
 
 func clientValidateConfig() (fs *flag.FlagSet) {
-	fs = clientCreateFlagSet()
+	fs = clientCreateFlagSet(os.Args[1:])
 
 	if cViper.GetBool("UseConfig") {
 		cViper.SetConfigType("yaml")

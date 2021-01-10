@@ -42,7 +42,7 @@ func StopServer(c *check.C) {
 
 func StartServer(c *check.C) {
 	sViper = viper.New()
-	serverLoadConfig(serverConfigDir)
+	serverLoadConfig(serverConfigDir, []string{})
 
 	db = setupDB("sqlite3", sViper.GetString("StateDir")+"/autoygg.db", false)
 	r := setupRouter(db)
@@ -115,7 +115,7 @@ func (*Suite) TestConfigLoading(c *check.C) {
 
 	// Load default config
 	cViper = viper.New()
-	clientCreateFlagSet()
+	clientCreateFlagSet([]string{})
 
 	// Test defaults
 	c.Assert(cViper.GetBool("daemon"), check.Equals, true)
@@ -146,7 +146,7 @@ func (*Suite) TestConfigLoading(c *check.C) {
 func (*Suite) TestInfo(c *check.C) {
 	// Load default config
 	cViper = viper.New()
-	fs := clientCreateFlagSet()
+	fs := clientCreateFlagSet([]string{})
 
 	// Populate a custom config file
 	writeServerConfig(c, []byte("---\nListenHost: \""+YggAddress+"\"\nListenPort: "+GatewayPort+"\nStateDir: \""+serverConfigDir+"\""))
@@ -185,13 +185,12 @@ func CustomClientConfig(c *check.C) (tmpDir string) {
 func (*Suite) TestRegistrationAndApproval(c *check.C) {
 	// Load default config
 	cViper = viper.New()
-	fs := clientCreateFlagSet()
+	fs := clientCreateFlagSet([]string{})
 
 	tmpDir := CustomClientConfig(c)
 	defer os.RemoveAll(tmpDir)
 
 	// Load default config
-	clientCreateFlagSet()
 	clientLoadConfig(tmpDir)
 
 	var err error
@@ -244,13 +243,12 @@ func (*Suite) TestRegistrationAndApproval(c *check.C) {
 func (*Suite) TestRegistration(c *check.C) {
 	// Load default config
 	cViper = viper.New()
-	fs := clientCreateFlagSet()
+	fs := clientCreateFlagSet([]string{})
 
 	tmpDir := CustomClientConfig(c)
 	defer os.RemoveAll(tmpDir)
 
 	// Load default config
-	clientCreateFlagSet()
 	clientLoadConfig(tmpDir)
 
 	//fixme need to send client info and test that it is required
@@ -302,13 +300,12 @@ func (*Suite) TestRegistration(c *check.C) {
 func (*Suite) TestAnonymous(c *check.C) {
 	// Load default config
 	cViper = viper.New()
-	fs := clientCreateFlagSet()
+	fs := clientCreateFlagSet([]string{})
 
 	tmpDir := CustomClientConfig(c)
 	defer os.RemoveAll(tmpDir)
 
 	// Load default config
-	clientCreateFlagSet()
 	clientLoadConfig(tmpDir)
 
 	var err error
@@ -357,7 +354,7 @@ func (*Suite) TestAnonymous(c *check.C) {
 
 func (*Suite) TestLeaseExpiration(c *check.C) {
 	// Load default config
-	fs := clientCreateFlagSet()
+	fs := clientCreateFlagSet([]string{})
 
 	tmpDir := CustomClientConfig(c)
 	defer os.RemoveAll(tmpDir)
