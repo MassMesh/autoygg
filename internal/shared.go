@@ -128,7 +128,7 @@ func tunnelIPWorker(lViper *viper.Viper, action string, address string, netMask 
 		}
 	}
 	if action == "Add" {
-		configChanges = append(configChanges, configChange{Name: "TunnelIP", OldVal: "", NewVal: address + "/" + string(netMask)})
+		configChanges = append(configChanges, configChange{Name: "TunnelIP", OldVal: "", NewVal: address + "/" + fmt.Sprint(netMask)})
 	}
 
 	return
