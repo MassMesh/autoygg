@@ -1,0 +1,13 @@
+version: 2.1
+
+jobs:
+ build:
+   machine: true
+   steps:
+     - checkout
+
+     # build the autoygg/test image
+     - run: cd docker-test && docker build . -t autoygg/test
+
+     # run the tests
+     - run: docker run --rm -ti --net=host --cap-add=NET_ADMIN --device=/dev/net/tun --name autoygg-test -v $(pwd):/autoygg autoygg/test
