@@ -173,6 +173,10 @@ Disabling Yggdrasil tunnel routing                                    [ ok ]
 $
 ```
 
+## Running tests
+
+Use the `make test` command. Docker is required, and your current user must be allowed to start and stop docker containers.
+
 ## Hacking
 
 GNU Make and a Go compiler, version 1.11 or higher are required. In addition,
