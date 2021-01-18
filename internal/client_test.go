@@ -101,6 +101,11 @@ func writeFile(c *check.C, path string, contents []byte) {
 	err := ioutil.WriteFile(path, contents, 0644)
 	if err != nil {
 		c.Fatalf("Couldn't write file %s", path)
+	} else {
+		// Wait a little bit to avoid races, we want the config change to be picked
+		// up before the test resumes.
+		time.Sleep(100 * time.Millisecond)
+		fmt.Printf("Wrote\n%s to %s\n", contents, path)
 	}
 }
 
