@@ -70,10 +70,9 @@ func checkACL(address string) bool {
 			// The address is on the accesslist. Accept.
 			log.Printf("This address is accesslisted, accepted request from %s\n", address)
 			return true
-		} else {
-			log.Printf("AccessList enabled and this address is not on the access list, rejected request from %s\n", address)
-			return false
 		}
+		log.Printf("AccessList enabled and this address is not on the access list, rejected request from %s\n", address)
+		return false
 	}
 	// The accesslist is disabled. Accept.
 	log.Println("AccessList disabled, accepted request from", address)

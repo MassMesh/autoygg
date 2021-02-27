@@ -510,11 +510,11 @@ func handleInfoWorker(fs *flag.FlagSet) (i info, err error) {
 }
 
 func handleInfo(fs *flag.FlagSet, i info) {
-	infoJson, err := json.MarshalIndent(i, "", "  ")
+	infoJSON, err := json.MarshalIndent(i, "", "  ")
 	if err != nil {
 		logAndExit(err.Error(), 1)
 	}
-	fmt.Printf("%s\n", infoJson)
+	fmt.Printf("%s\n", infoJSON)
 	os.Exit(0)
 }
 
