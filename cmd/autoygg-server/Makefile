@@ -3,6 +3,9 @@ version = $(shell ../../version-at-commit.sh)
 
 all: amd64 rpi3 rpi4
 
+build:
+	go build -ldflags "-s -w -X github.com/massmesh/autoygg/internal.version=$(version)"
+
 amd64:
 	go build -ldflags "-s -w -X github.com/massmesh/autoygg/internal.version=$(version)" -o autoygg-server-amd64
 

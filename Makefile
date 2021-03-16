@@ -4,6 +4,8 @@ mkfile_dir := $(dir $(mkfile_path))
 
 all: client server
 
+build: client-build server-build
+
 static: client-amd64-static server-amd64-static
 
 amd64: client-amd64 server-amd64
@@ -17,6 +19,12 @@ client:
 
 server:
 	cd cmd/autoygg-server && $(MAKE)
+
+client-build:
+	cd cmd/autoygg-client && $(MAKE) build
+
+server-build:
+	cd cmd/autoygg-server && $(MAKE) build
 
 client-amd64:
 	cd cmd/autoygg-client && $(MAKE) amd64
