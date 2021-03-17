@@ -15,6 +15,38 @@ autoygg-server. Because the traffic between the client and server runs over the
 yggdrasil network, it is end-to-end encrypted until the point of egress to the
 internet.
 
+## Installing
+
+_autoygg_ is packaged for these distributions:
+
+* Arch Linux
+
+```
+sudo pacman -Sy autoygg
+```
+
+* OpenWrt
+
+Choose one of the following feeds, depending on the architecture of your machine:
+
+```
+# Uncomment the next line for Raspberry pi 3 and similar
+#echo "https://downloads.massmesh.net/snapshots/packages/aarch64_cortex-a53/generic/" >> /etc/opkg/customfeeds.conf
+# Uncomment the next line for Raspberry pi 4 and similar
+#echo "https://downloads.massmesh.net/snapshots/packages/aarch64_cortex-a72/generic/" >> /etc/opkg/customfeeds.conf
+# Uncomment the next line for x86_64
+#echo "https://downloads.massmesh.net/snapshots/packages/x86_64/generic/" >> /etc/opkg/customfeeds.conf
+```
+
+Then install the package:
+
+```
+opkg update
+opkg install autoygg
+```
+
+For all other distributions, read below for instructions to build from source.
+
 ## Building the software
 
 GNU Make and a Go compiler, version 1.11 or higher are required.
