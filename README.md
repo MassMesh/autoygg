@@ -19,10 +19,10 @@ internet.
 
 _autoygg_ is packaged for these distributions:
 
-* Arch Linux
+* Arch Linux ([AUR](https://aur.archlinux.org/packages/autoygg-git))
 
 ```
-sudo pacman -Sy autoygg
+yay autoygg-git
 ```
 
 * OpenWrt
