@@ -42,6 +42,12 @@ var errorCount = prometheus.NewCounterVec(
 	[]string{"type"},
 )
 
+var validLeases = prometheus.NewGauge(
+	prometheus.GaugeOpts{
+		Name: "autoygg_valid_leases_total",
+		Help: "Number of valid leases.",
+	})
+
 func serverUsage(fs *flag.FlagSet) {
 	fmt.Fprintf(os.Stderr, `
 autoygg-server provides internet egress for Yggdrasil nodes running autoygg-client.
@@ -56,6 +62,20 @@ func incErrorCount(errorType string) {
 	if enablePrometheus {
 		errorCount.WithLabelValues(errorType).Inc()
 	}
+}
+
+func countValidLeases(db *gorm.DB) error {
+	if enablePrometheus {
+		var registrations []registration
+		result := db.Model(&registration{}).Where("state = 'success' and lease_expires > ?", time.Now()).Find(&registrations)
+		if result.Error != nil {
+			err := result.Error
+			return err
+		}
+		debug("Found %d valid leases\n", result.RowsAffected)
+		validLeases.Set(float64(result.RowsAffected))
+	}
+	return nil
 }
 
 func enablePrometheusEndpoint() (p *ginprometheus.Prometheus) {
@@ -254,6 +274,13 @@ func releaseHandler(db *gorm.DB, c *gin.Context) {
 	// FIXME do not do this inline
 	serverRemoveRemoteSubnet(db, registration.ID)
 
+	err = countValidLeases(db)
+	if err != nil {
+		incErrorCount("internal")
+		log.Println("Internal error, unable to count valid leases", err)
+		return
+	}
+
 	c.JSON(http.StatusOK, registration)
 }
 
@@ -311,6 +338,12 @@ func newRegistrationHandler(db *gorm.DB, c *gin.Context) {
 		return
 	}
 	queueAddRemoteSubnet(db, newRegistration.ID)
+	err := countValidLeases(db)
+	if err != nil {
+		incErrorCount("internal")
+		log.Println("Internal error, unable to count valid leases", err)
+		return
+	}
 
 	c.JSON(http.StatusOK, newRegistration)
 }
@@ -382,8 +415,10 @@ func setupRouter(db *gorm.DB) (r *gin.Engine) {
 	if enablePrometheus {
 		p := enablePrometheusEndpoint()
 		p.Use(r)
-		err := prometheus.Register(errorCount)
 		log.Printf("Enabling Prometheus endpoint")
+		err := prometheus.Register(errorCount)
+		handleError(err, sViper, false)
+		err = prometheus.Register(validLeases)
 		handleError(err, sViper, false)
 	}
 
@@ -922,6 +957,13 @@ func expireLeasesWorker(db *gorm.DB, mutex *sync.Mutex) {
 		}
 	}
 	mutex.Unlock()
+
+	err := countValidLeases(db)
+	if err != nil {
+		incErrorCount("internal")
+		log.Println("Internal error, unable to count valid leases", err)
+		return
+	}
 }
 
 // ServerMain is the main() function for the server program
