@@ -3,6 +3,17 @@ package internal
 import (
 	"errors"
 	"fmt"
+	"log"
+	"net"
+	"net/http"
+	"os"
+	"os/signal"
+	"strconv"
+	"strings"
+	"sync"
+	"syscall"
+	"time"
+
 	"github.com/fsnotify/fsnotify"
 	"github.com/gin-gonic/gin"
 	"github.com/jinzhu/gorm"
@@ -11,15 +22,6 @@ import (
 	flag "github.com/spf13/pflag"
 	"github.com/spf13/viper"
 	"github.com/zsais/go-gin-prometheus"
-	"log"
-	"net"
-	"net/http"
-	"os"
-	"os/signal"
-	"strings"
-	"sync"
-	"syscall"
-	"time"
 )
 
 var (
@@ -144,19 +146,26 @@ func nextIP(ip net.IP, inc uint) net.IP {
 	return net.IPv4(v0, v1, v2, v3)
 }
 
-func newIPAddress(db *gorm.DB) (IPAddress string) {
+func newIPAddress(db *gorm.DB) (string, string) {
 	ipMin := sViper.GetString("GatewayTunnelIPRangeMin")
 	ipMax := sViper.GetString("GatewayTunnelIPRangeMax")
 
-	count := 1
+	count := 0
 	IP := net.ParseIP(ipMin)
-	for count != 0 && IP.String() != ipMax {
+	tunnelName := ""
+	clientCount := 0
+	for IP.String() != ipMax {
 		db.Model(&registration{}).Where("client_ip = ?", IP.String()).Count(&count)
 		if count != 0 {
 			IP = nextIP(IP, 1)
+			clientCount++
+		} else {
+			tunnelName = "autoygg_client" + strconv.Itoa(clientCount)
+			break
 		}
 	}
-	return IP.String()
+	debug("New IP %+v (%+v)\n", IP.String(), tunnelName)
+	return IP.String(), tunnelName
 }
 
 func bindRegistration(c *gin.Context) (r registration, err error) {
@@ -226,11 +235,18 @@ func authorized(db *gorm.DB, c *gin.Context) (r registration, existingRegistrati
 func renewHandler(db *gorm.DB, c *gin.Context) {
 	registration, existingRegistration, err := authorized(db, c)
 	if err != nil {
+		// authorized terminates the http request properly
 		return
 	}
 
 	registration = existingRegistration
 	registration.LeaseExpires = time.Now().UTC().Add(time.Duration(sViper.GetInt("LeaseTimeoutSeconds")) * time.Second)
+
+	if registration.State == "expired" {
+		c.JSON(http.StatusNotFound, gin.H{"Error": "Registration not found"})
+		return
+	}
+
 	if registration.State != "success" {
 		registration.State = "open"
 	}
@@ -245,7 +261,11 @@ func renewHandler(db *gorm.DB, c *gin.Context) {
 	}
 
 	if registration.State == "open" {
-		queueAddRemoteSubnet(db, registration.ID)
+		err = queueAddTunnel(db, registration.ID)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"{Error": "Internal Server Error"})
+			return
+		}
 	}
 
 	c.JSON(http.StatusOK, registration)
@@ -254,10 +274,16 @@ func renewHandler(db *gorm.DB, c *gin.Context) {
 func releaseHandler(db *gorm.DB, c *gin.Context) {
 	registration, existingRegistration, err := authorized(db, c)
 	if err != nil {
+		// authorized terminates the http request properly
 		return
 	}
 
 	registration = existingRegistration
+	if registration.State == "expired" {
+		c.JSON(http.StatusNotFound, gin.H{"Error": "Registration not found"})
+		return
+	}
+
 	// Set the lease expiry date in the past
 	registration.LeaseExpires = time.Now().UTC().Add(-10 * time.Second)
 	registration.State = "expired"
@@ -272,12 +298,19 @@ func releaseHandler(db *gorm.DB, c *gin.Context) {
 	}
 
 	// FIXME do not do this inline
-	serverRemoveRemoteSubnet(db, registration.ID)
+	err = removeClientTunnel(sViper, registration.ClientTunnelName)
+	if err != nil {
+		incErrorCount("internal")
+		log.Println("Internal error, unable to remove client tunnel", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"Error": "Internal Server Error"})
+		return
+	}
 
 	err = countValidLeases(db)
 	if err != nil {
 		incErrorCount("internal")
 		log.Println("Internal error, unable to count valid leases", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"Error": "Internal Server Error"})
 		return
 	}
 
@@ -314,11 +347,17 @@ func newRegistrationHandler(db *gorm.DB, c *gin.Context) {
 
 	if existingRegistration == (registration{}) {
 		// First time we've seen this public key
-		newRegistration.ClientIP = newIPAddress(db)
+		newRegistration.ClientIP, newRegistration.ClientTunnelName = newIPAddress(db)
 		newRegistration.ClientNetMask = sViper.GetInt("GatewayTunnelNetMask")
 		newRegistration.ClientGateway = sViper.GetString("GatewayTunnelIP")
 		newRegistration.GatewayPublicKey = sViper.GetString("GatewayPublicKey")
 		newRegistration.YggIP = c.ClientIP()
+		if newRegistration.ClientTunnelName == "" {
+			incErrorCount("internal")
+			log.Println("Internal error, ClientTunnelName unset")
+			c.JSON(http.StatusInternalServerError, registration{Error: "Internal Server Error"})
+			return
+		}
 	} else {
 		// FIXME only allow if the lease is expired?
 		// Or simply disallow? But that's annoying.
@@ -337,11 +376,17 @@ func newRegistrationHandler(db *gorm.DB, c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, registration{Error: "Internal Server Error"})
 		return
 	}
-	queueAddRemoteSubnet(db, newRegistration.ID)
-	err := countValidLeases(db)
+	err := queueAddTunnel(db, newRegistration.ID)
+	if err != nil {
+		incErrorCount("internal")
+		c.JSON(http.StatusInternalServerError, registration{Error: "Internal Server Error"})
+		return
+	}
+	err = countValidLeases(db)
 	if err != nil {
 		incErrorCount("internal")
 		log.Println("Internal error, unable to count valid leases", err)
+		c.JSON(http.StatusInternalServerError, registration{Error: "Internal Server Error"})
 		return
 	}
 
@@ -349,25 +394,24 @@ func newRegistrationHandler(db *gorm.DB, c *gin.Context) {
 }
 
 // caller must hold the mutex lock
-func queueAddRemoteSubnet(db *gorm.DB, ID uint) {
+func queueAddTunnel(db *gorm.DB, ID uint) error {
 	var r registration
 	if result := db.First(&r, ID); result.Error != nil {
 		incErrorCount("internal")
 		log.Println("Internal error, unable to execute query:", result.Error)
-		return
+		return result.Error
 	}
 	if r.State != "open" && r.State != "fail" {
 		// Nothing to do!
-		return
+		return nil
 	}
 	// FIXME: actually queue this, rather than doing it inline
-	log.Printf("Adding remote subnet for %s", r.ClientIP+"/32")
-	err := addRemoteSubnet(sViper, r.ClientIP+"/32", r.PublicKey)
+	log.Printf("Add tunnel %s for %s", r.ClientTunnelName, r.ClientIP+"/32")
+	err := addClientTunnel(sViper, r.ClientTunnelName, "", r.ClientIP, 32, r.YggIP)
 	handleError(err, sViper, false)
 
 	if err != nil {
-		incErrorCount("yggdrasil")
-		log.Printf("Yggdrasil error, unable to run command: %s", err)
+		incErrorCount("internal")
 		r.State = "fail"
 	} else {
 		r.State = "success"
@@ -376,36 +420,13 @@ func queueAddRemoteSubnet(db *gorm.DB, ID uint) {
 	if result := db.Save(&r); result.Error != nil {
 		incErrorCount("internal")
 		log.Println("Internal error, unable to execute query:", result.Error)
-		return
-	}
-}
-
-func serverRemoveRemoteSubnet(db *gorm.DB, ID uint) {
-	var r registration
-	if result := db.First(&r, ID); result.Error != nil {
-		incErrorCount("internal")
-		log.Println("Internal error, unable to execute query:", result.Error)
-		return
+		return result.Error
 	}
 
-	// FIXME: actually queue this, rather than doing it inline
-	log.Printf("Removing remote subnet for %s", r.ClientIP+"/32")
-	err := removeRemoteSubnet(sViper, r.ClientIP+"/32", r.PublicKey)
-	handleError(err, sViper, false)
-
-	if err != nil {
-		incErrorCount("yggdrasil")
-		log.Printf("%s", err)
-		r.State = "fail"
-	} else {
-		r.State = "removed"
+	if r.State != "success" {
+		return err
 	}
-
-	if result := db.Delete(&r); result.Error != nil {
-		incErrorCount("internal")
-		log.Println("Internal error, unable to execute query:", result.Error)
-		return
-	}
+	return nil
 }
 
 func setupRouter(db *gorm.DB) (r *gin.Engine) {
@@ -507,7 +528,7 @@ func serverLoadConfigDefaults() {
 	// routing table number. All routes will be installed in this table, and a rule will be added to direct traffic
 	// from the mesh to it.
 	sViper.SetDefault("RoutingTableNumber", 42)
-	sViper.SetDefault("ListIpRuleCommand", "ip rule list from %%GatewayTunnelIP%%/%%GatewayTunnelNetMask%% table %%RoutingTableNumber%%")
+	sViper.SetDefault("ListIpRuleCommand", "ip rule list |grep 'from %%GatewayTunnelIP%%/%%GatewayTunnelNetMask%% lookup %%RoutingTableNumber%%'")
 	sViper.SetDefault("AddIpRuleCommand", "ip rule add from %%GatewayTunnelIP%%/%%GatewayTunnelNetMask%% table %%RoutingTableNumber%%")
 	sViper.SetDefault("DelIpRuleCommand", "ip rule del from %%GatewayTunnelIP%%/%%GatewayTunnelNetMask%% table %%RoutingTableNumber%%")
 	sViper.SetDefault("ListIpRouteTableMeshCommand", "ip ro list default dev %%GatewayWanInterface%% table %%RoutingTableNumber%%")
@@ -831,7 +852,11 @@ func loadLeases(db *gorm.DB) (err error) {
 			return
 		}
 		debug("re-enabling lease for registration %+v\n", r)
-		queueAddRemoteSubnet(db, r.ID)
+		err = queueAddTunnel(db, r.ID)
+		if err != nil {
+			incErrorCount("internal")
+			return
+		}
 	}
 
 	return
@@ -850,19 +875,10 @@ func setup() {
 	log.Printf("Enabling IP forwarding")
 	err = enableIPForwarding()
 	handleError(err, sViper, true)
-	log.Printf("Enabling Yggdrasil tunnel routing")
-	err = enableTunnelRouting()
-	handleError(err, sViper, true)
-	log.Printf("Adding Yggdrasil local subnet 0.0.0.0/0")
-	err = addLocalSubnet("0.0.0.0/0")
-	handleError(err, sViper, true)
-	log.Printf("Adding ip rule for %s/%d to table %d", sViper.GetString("GatewayTunnelIP"), sViper.GetInt("GatewayTunnelNetmask"), sViper.GetInt("RoutingTableNumber"))
-	err = commandWorker("Add", "IpRuleCommand", []string{"GatewayTunnelIP", "GatewayTunnelNetMask", "RoutingTableNumber"}, false)
+	log.Printf("Add ip rule for %s/%d to table %d", sViper.GetString("GatewayTunnelIP"), sViper.GetInt("GatewayTunnelNetmask"), sViper.GetInt("RoutingTableNumber"))
+	err = commandWorker("Add", "IpRuleCommand", []string{"GatewayTunnelIP", "GatewayTunnelNetMask", "RoutingTableNumber"}, true)
 	handleError(err, sViper, true)
 	err = ipRouteMeshTableWorker("Add", fmt.Sprintf("Detected vpn configuration, adding mesh routing default gateway to table %d", sViper.GetInt("RoutingTableNumber")))
-	handleError(err, sViper, true)
-	log.Printf("Adding tunnel IP %s/%d", sViper.GetString("GatewayTunnelIP"), sViper.GetInt("GatewayTunnelNetmask"))
-	err = addTunnelIP(sViper, sViper.GetString("GatewayTunnelIP"), sViper.GetInt("GatewayTunnelNetmask"))
 	handleError(err, sViper, true)
 }
 
@@ -872,23 +888,11 @@ func tearDown() {
 		debug("Tearing down %+v\n", change)
 		if change.Name == "IpRuleCommand" {
 			log.Printf("Removing ip rule for %s/%d to table %d", sViper.GetString("GatewayTunnelIP"), sViper.GetInt("GatewayTunnelNetmask"), sViper.GetInt("RoutingTableNumber"))
-			err := commandWorker("Del", "IpRuleCommand", []string{"GatewayTunnelIP", "GatewayTunnelNetMask", "RoutingTableNumber"}, false)
+			err := commandWorker("Del", "IpRuleCommand", []string{"GatewayTunnelIP", "GatewayTunnelNetMask", "RoutingTableNumber"}, true)
 			handleError(err, sViper, true)
 		} else if change.Name == "IpRouteTableMeshCommand" {
 			log.Printf("Removing mesh routing default gateway from table %d", sViper.GetInt("RoutingTableNumber"))
 			err := commandWorker("Del", "IpRouteTableMeshCommand", []string{"GatewayWanInterface", "RoutingTableNumber"}, false)
-			handleError(err, sViper, true)
-		} else if change.Name == "TunnelIP" {
-			log.Printf("Removing tunnel IP %s/%d", sViper.GetString("GatewayTunnelIP"), sViper.GetInt("GatewayTunnelNetmask"))
-			err := removeTunnelIP(sViper, sViper.GetString("GatewayTunnelIP"), sViper.GetInt("GatewayTunnelNetmask"))
-			handleError(err, sViper, true)
-		} else if change.Name == "LocalSubnet" {
-			log.Printf("Removing Yggdrasil local subnet 0.0.0.0/0")
-			err := removeLocalSubnet("0.0.0.0/0")
-			handleError(err, sViper, true)
-		} else if change.Name == "TunnelRouting" {
-			log.Printf("Disabling Yggdrasil tunnel routing")
-			err := disableTunnelRouting()
 			handleError(err, sViper, true)
 		} else if change.Name == "IPForwarding" {
 			log.Printf("Disabling IP forwarding")
@@ -943,11 +947,13 @@ func expireLeasesWorker(db *gorm.DB, mutex *sync.Mutex) {
 			mutex.Unlock()
 			continue
 		}
-		debug("Removing remote subnet for registration %+v\n", r)
-		err := removeRemoteSubnet(sViper, r.ClientIP+"/32", r.PublicKey)
+
+		debug("Removing client tunnel for registration %+v\n", r)
+		err := removeClientTunnel(sViper, r.ClientTunnelName)
 		if err != nil {
 			incErrorCount("internal")
-			log.Println("Internal error, unable to execute query:", result.Error)
+			log.Println("Internal error, unable to remove client tunnel", err)
+			return
 		}
 
 		if result := db.Delete(&r); result.Error != nil {
@@ -975,6 +981,16 @@ func ServerMain() {
 	enablePrometheus = true
 
 	fs := serverLoadConfig("", os.Args[1:])
+
+	// Make sure we have a version of yggdrasil that is recent enough
+	legacy, version, err := legacyYggdrasil()
+	if err != nil {
+		Fatal(err)
+	}
+	if legacy {
+		err = fmt.Errorf("The detected version of yggdrasil (%s) is too old, it is not supported by this version of autoygg.\nPlease upgrade yggdrasil to version 0.4.0 or later, or downgrade autoygg to v0.2.2", version)
+		Fatal(err)
+	}
 
 	// if GatewayPublicKey is not set in the config, calculate it here.
 	// This has the advantage that --help and --version are already handled
@@ -1016,7 +1032,7 @@ func ServerMain() {
 
 	setup()
 
-	err := loadLeases(db)
+	err = loadLeases(db)
 	if err != nil {
 		Fatal(err)
 	}
