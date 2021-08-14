@@ -444,6 +444,7 @@ func (*Suite) TestAnonymousAndApproval(c *check.C) {
 
 func (*Suite) TestLeaseExpiration(c *check.C) {
 	// Load default config
+	cViper = viper.New()
 	fs := clientCreateFlagSet([]string{})
 
 	tmpDir := CustomClientConfig(c)

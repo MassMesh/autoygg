@@ -7,10 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/jinzhu/gorm"
-	"github.com/spf13/viper"
-	"github.com/yggdrasil-network/yggdrasil-go/src/config"
-	"gopkg.in/yaml.v2"
 	"io"
 	"io/ioutil"
 	"log"
@@ -21,6 +17,13 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/jinzhu/gorm"
+	"github.com/spf13/viper"
+	"github.com/vishvananda/netlink"
+	"github.com/yggdrasil-network/yggdrasil-go/src/config"
+	"golang.org/x/mod/semver"
+	"gopkg.in/yaml.v2"
 )
 
 var (
@@ -79,6 +82,7 @@ type registration struct {
 	ClientIP         string // The tunnel IP address assigned to the client
 	ClientNetMask    int    // The tunnel netmask
 	ClientGateway    string
+	ClientTunnelName string
 	ClientName       string // Registration name (optional)
 	ClientEmail      string // Registration email (optional)
 	ClientPhone      string // Registration phone (optional)
@@ -96,74 +100,97 @@ func Fatal(err interface{}) {
 	log.Fatal("Error: ", err)
 }
 
-func addTunnelIP(lViper *viper.Viper, address string, netMask int) error {
-	return tunnelIPWorker(lViper, "Add", address, netMask)
+func addClientTunnel(lViper *viper.Viper, name string, address string, gwAddress string, netMask int, yggIP string) error {
+	return clientTunnelWorker(lViper, "Add", name, address, gwAddress, netMask, yggIP)
+}
+func removeClientTunnel(lViper *viper.Viper, name string) error {
+	return clientTunnelWorker(lViper, "Del", name, "", "", 0, "")
 }
 
-func removeTunnelIP(lViper *viper.Viper, address string, netMask int) error {
-	return tunnelIPWorker(lViper, "Del", address, netMask)
-}
-
-func tunnelIPWorker(lViper *viper.Viper, action string, address string, netMask int) (err error) {
-	cmd := lViper.GetString("ListTunnelRouteCommand")
-	cmd = strings.Replace(cmd, "%%YggdrasilInterface%%", lViper.GetString("YggdrasilInterface"), -1)
-
-	out, err := command(lViper.GetString("Shell"), lViper.GetString("ShellCommandArg"), cmd).Output()
+func clientTunnelWorker(lViper *viper.Viper, action string, name string, address string, gwAddress string, netMask int, yggIP string) (err error) {
+	// See if a link with the specified name exists
+	links, err := netlink.LinkList()
 	if err != nil {
-		err = fmt.Errorf("Unable to run `%s %s %s`: %s", lViper.GetString("Shell"), lViper.GetString("ShellCommandArg"), cmd, err)
 		return
 	}
-
-	found := strings.Index(string(out), address+"/"+strconv.Itoa(netMask))
-
-	if (action == "Add" && found == -1) || (action == "Del" && found != -1) {
-		cmd = lViper.GetString(action + "TunnelRouteCommand")
-		cmd = strings.Replace(cmd, "%%IPAddress%%", address, -1)
-		cmd = strings.Replace(cmd, "%%NetMask%%", strconv.Itoa(netMask), -1)
-		cmd = strings.Replace(cmd, "%%YggdrasilInterface%%", lViper.GetString("YggdrasilInterface"), -1)
-		out, err = command(lViper.GetString("Shell"), lViper.GetString("ShellCommandArg"), cmd).CombinedOutput()
-		if err != nil {
-			err = fmt.Errorf("Unable to run `%s %s %s`: %s (%s)", lViper.GetString("Shell"), lViper.GetString("ShellCommandArg"), cmd, err, out)
-			return
+	found := 0
+	for _, v := range links {
+		debug("Found link with name %s\n", v.Attrs().Name)
+		if v.Attrs().Name == name {
+			if action == "Del" {
+				if err = netlink.LinkSetDown(v); err != nil {
+					err = fmt.Errorf("unable to turn down interface %s: %s", name, err.Error())
+					return
+				}
+				if err = netlink.LinkDel(v); err != nil {
+					err = fmt.Errorf("unable to delete interface %s: %s", name, err.Error())
+					return
+				}
+				return
+			}
+			found = 1
 		}
 	}
+	if action == "Del" && found == 0 {
+		err = fmt.Errorf("unable to delete interface %s: not found", name)
+		return
+	}
+	if action == "Add" && found == 1 {
+		// We assume the interface is properly configured. If it is not, running
+		// the client with --action=release will clean up the interface.
+		debug(fmt.Sprintf("requested adding link with name %s, but it exists! Skipping...", name))
+		return
+	}
+
+	var selfAddress string
+	selfAddress, err = getSelfAddress()
+	if err != nil {
+		return
+	}
+
+	link := &netlink.Gretun{
+		LinkAttrs: netlink.LinkAttrs{Name: name},
+		Local:     net.ParseIP(selfAddress),
+		Remote:    net.ParseIP(yggIP)}
+
+	if err = netlink.LinkAdd(link); err != nil {
+		err = fmt.Errorf("unable to create interface %s with local %s remote %s (is there an existing tunnel for this pair of addresses, possibly with a different name?): %s", name, selfAddress, yggIP, err.Error())
+		return
+	}
+	debug("Added GRE tunnel interface with name %s", name)
+
+	if err = netlink.LinkSetUp(link); err != nil {
+		err = fmt.Errorf("unable to turn up interface %s: %s", name, err.Error())
+		return
+	}
+	debug("Enabled GRE tunnel interface with name %s", name)
+	if address != "" {
+		// On the client, we add the newly issued private IP to the tunnel interface
+		var address = &net.IPNet{IP: net.ParseIP(address), Mask: net.CIDRMask(netMask, 32)}
+		a := &netlink.Addr{IPNet: address}
+		if err = netlink.AddrAdd(link, a); err != nil {
+			err = fmt.Errorf("unable to add address %s to interface %s: %s", a.String(), name, err.Error())
+			return
+		}
+		debug("Added address %s to interface %s", a.String(), name)
+	} else {
+		// On the server, we add a route to the tunnel interface for the newly issued private client IP
+		var gw *net.IPNet
+		_, gw, err = net.ParseCIDR(gwAddress + "/" + strconv.Itoa(netMask))
+		if err != nil {
+			err = fmt.Errorf("unable to parse CIDR %s: %s", gwAddress+"/"+strconv.Itoa(netMask), err.Error())
+			return
+		}
+		route := netlink.Route{LinkIndex: link.Attrs().Index, Dst: gw}
+		if err = netlink.RouteAdd(&route); err != nil {
+			err = fmt.Errorf("unable to add route to %s to interface %s: %s", gw.String(), name, err.Error())
+			return
+		}
+		debug("Added route to %s to interface %s", gw.String(), name)
+	}
+
 	if action == "Add" {
-		configChanges = append(configChanges, configChange{Name: "TunnelIP", OldVal: "", NewVal: address + "/" + fmt.Sprint(netMask)})
-	}
-
-	return
-}
-
-func addRemoteSubnet(lViper *viper.Viper, subnet string, publicKey string) error {
-	return remoteSubnetWorker(lViper, "Add", subnet, publicKey)
-}
-
-func removeRemoteSubnet(lViper *viper.Viper, subnet string, publicKey string) error {
-	return remoteSubnetWorker(lViper, "Del", subnet, publicKey)
-}
-
-func remoteSubnetWorker(lViper *viper.Viper, action string, subnet string, publicKey string) (err error) {
-	out, err := executeYggdrasilCtl("getroutes")
-	if err != nil {
-		return
-	}
-	matched, err := regexp.Match(subnet, out)
-	if err != nil {
-		return
-	}
-	if (matched && action == "Add") || (!matched && action == "Del") {
-		// We don't need to do anything
-		return
-	}
-
-	cmd := lViper.GetString("Gateway" + action + "RemoteSubnetCommand")
-	cmd = strings.Replace(cmd, "%%Subnet%%", subnet, -1)
-	cmd = strings.Replace(cmd, "%%ClientPublicKey%%", publicKey, -1)
-
-	command := command(lViper.GetString("Shell"), lViper.GetString("ShellCommandArg"), cmd)
-	err = command.Run()
-	if err != nil {
-		err = fmt.Errorf("Unable to run `%s %s %s`: %s", lViper.GetString("Shell"), lViper.GetString("ShellCommandArg"), cmd, err)
+		configChanges = append(configChanges, configChange{Name: "ClientTunnel", OldVal: "", NewVal: name})
 	}
 
 	return
@@ -315,7 +342,7 @@ func yggdrasilRunningPeers(startingPeers []string) (peers []string, err error) {
 	if err != nil {
 		return
 	}
-	peerRe := regexp.MustCompile(` .*?://(.*):\d+? `)
+	peerRe := regexp.MustCompile(` .*?://(.*):\d+?`)
 	for _, l := range strings.Split(string(out), "\n") {
 		matched = re.MatchString(l)
 		if !matched {
@@ -413,77 +440,10 @@ func executeYggdrasilCtl(cmd ...string) (out []byte, err error) {
 	return
 }
 
-func enableTunnelRouting() error {
-	return tunnelRoutingWorker(true)
-}
-
-func disableTunnelRouting() error {
-	return tunnelRoutingWorker(false)
-}
-
-func tunnelRoutingWorker(state bool) (err error) {
-	out, err := executeYggdrasilCtl("gettunnelrouting")
-	if err != nil {
-		return
-	}
-
-	var matched bool
-	if state {
-		matched, err = regexp.Match("Tunnel routing is enabled", out)
-		if err != nil || matched {
-			return
-		}
-	} else {
-		matched, err = regexp.Match("Tunnel routing is disabled", out)
-		if err != nil || matched {
-			return
-		}
-	}
-
-	_, err = executeYggdrasilCtl("settunnelrouting", "enabled="+strconv.FormatBool(state))
-	if err != nil {
-		return
-	}
-	if state {
-		configChanges = append(configChanges, configChange{Name: "TunnelRouting", OldVal: false, NewVal: state})
-	}
-
-	return
-}
-
-func addLocalSubnet(subnet string) error {
-	return localSubnetWorker("add", subnet)
-}
-
-func removeLocalSubnet(subnet string) error {
-	return localSubnetWorker("remove", subnet)
-}
-
-func localSubnetWorker(action string, subnet string) (err error) {
-	out, err := executeYggdrasilCtl("getsourcesubnets")
-	if err != nil {
-		return
-	}
-
-	matched, err := regexp.Match("- "+subnet, out)
-	if err != nil || (action == "add" && matched) || (action == "remove" && !matched) {
-		return
-	}
-
-	_, err = executeYggdrasilCtl(action+"localsubnet", "subnet="+subnet)
-	if err != nil {
-		return
-	}
-	if action == "add" {
-		configChanges = append(configChanges, configChange{Name: "LocalSubnet", OldVal: "", NewVal: subnet})
-	}
-
-	return
-}
-
 func getSelfAddress() (address string, err error) {
 	out, err := executeYggdrasilCtl("-v", "getSelf")
 	if err != nil {
+		err = fmt.Errorf("Unable to run yggdrasilctl -v getSelf: %s", err.Error())
 		return
 	}
 
@@ -506,7 +466,7 @@ func getSelfPublicKey() (publicKey string, err error) {
 		return
 	}
 
-	re := regexp.MustCompile(`(?m)^Public encryption key: (.*?)$`)
+	re := regexp.MustCompile(`(?m)^Public key: (.*?)$`)
 	match := re.FindStringSubmatch(string(out))
 
 	if len(match) < 2 {
@@ -517,6 +477,45 @@ func getSelfPublicKey() (publicKey string, err error) {
 	publicKey = match[1]
 
 	return
+}
+
+func getSelfVersion() (version string, err error) {
+	out, err := executeYggdrasilCtl("-v", "getSelf")
+	if err != nil {
+		return
+	}
+
+	re := regexp.MustCompile(`(?m)^Build version: (.*?)$`)
+	match := re.FindStringSubmatch(string(out))
+
+	if len(match) < 2 {
+		err = fmt.Errorf("Unable to parse yggdrasilctl output: %s", string(out))
+		return
+	}
+
+	version = match[1]
+
+	return
+}
+
+func legacyYggdrasil() (bool, string, error) {
+	version, err := getSelfVersion()
+	if err != nil {
+		return false, "", err
+	}
+
+	if !semver.IsValid("v" + version) {
+		err = fmt.Errorf("Unable to parse yggdrasilctl version output, invalid version: %s", version)
+		return false, version, err
+	}
+
+	if semver.Compare("0.4.0", version) > 0 {
+		// version < 0.4.0
+		return true, version, nil
+	}
+
+	// version >= 0.4.0
+	return false, version, nil
 }
 
 func handleError(err error, lViper *viper.Viper, terminateOnFail bool) {
@@ -589,15 +588,10 @@ func viperLoadSharedDefaults(lViper *viper.Viper) {
 	lViper.SetDefault("StateDir", "/var/lib/autoygg")
 	lViper.SetDefault("Shell", "/bin/sh")
 	lViper.SetDefault("ShellCommandArg", "-c")
-	lViper.SetDefault("ListTunnelRouteCommand", "ip addr list %%YggdrasilInterface%%")
-	lViper.SetDefault("AddTunnelRouteCommand", "ip addr add %%IPAddress%%/%%NetMask%% dev %%YggdrasilInterface%%")
-	lViper.SetDefault("DelTunnelRouteCommand", "ip addr del %%IPAddress%%/%%NetMask%% dev %%YggdrasilInterface%%")
 	lViper.SetDefault("AddPeerRouteListCommand", "ip ro list %%Peer%% via %%DefaultGatewayIP%% dev %%DefaultGatewayDevice%%")
 	lViper.SetDefault("DelPeerRouteListCommand", "ip ro list %%Peer%%")
 	lViper.SetDefault("AddPeerRouteCommand", "ip ro add %%Peer%% via %%DefaultGatewayIP%% dev %%DefaultGatewayDevice%%")
 	lViper.SetDefault("DelPeerRouteCommand", "ip ro del %%Peer%%")
-	lViper.SetDefault("GatewayAddRemoteSubnetCommand", "yggdrasilctl addremotesubnet subnet=%%Subnet%% box_pub_key=%%ClientPublicKey%%")
-	lViper.SetDefault("GatewayDelRemoteSubnetCommand", "yggdrasilctl removeremotesubnet subnet=%%Subnet%% box_pub_key=%%ClientPublicKey%%")
 	lViper.SetDefault("DefaultGatewayCommand", "ip ro replace default via %%ClientGateway%%")
 	lViper.SetDefault("DelDefaultGatewayCommand", "ip ro del default")
 	lViper.SetDefault("Version", false)

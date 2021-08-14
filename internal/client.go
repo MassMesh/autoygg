@@ -37,7 +37,6 @@ type state struct {
 	ClientNetMask             int                     `json:"clientnetmask"`
 	ClientGateway             string                  `json:"clientgateway"`
 	LeaseExpires              time.Time               `json:"leaseexpires"`
-	TunnelRouting             bool                    `json:"tunnelrouting"`
 	PeerRoutes                map[string]yggPeerRoute `json:"peerroutes"`
 }
 
@@ -126,42 +125,22 @@ func doRequestWorker(fs *flag.FlagSet, verb string, action string, gatewayHost s
 func clientSetupRoutes(clientIP string, clientNetMask int, clientGateway string, publicKey string, defaultGatewayIP string, defaultGatewayDev string, State state) (newState state, err error) {
 	newState = State
 	newState.Error = ""
-	log.Printf("Enabling Yggdrasil tunnel routing")
-	err = enableTunnelRouting()
-	handleError(err, cViper, false)
-	if err != nil {
-		newState.Error += err.Error() + "\n"
-		saveState(State)
-		return
-	}
-	newState.TunnelRouting = true
 
 	newState.OriginalDefaultGatewayDev = defaultGatewayDev
 	newState.OriginalDefaultGatewayIP = defaultGatewayIP
 
-	log.Printf("Adding Yggdrasil local subnet 0.0.0.0/0")
-	err = addLocalSubnet("0.0.0.0/0")
+	log.Printf("Create GRE tunnel")
+	err = addClientTunnel(cViper, "autoygg", clientIP, clientGateway, clientNetMask, State.GatewayHost)
 	handleError(err, cViper, false)
 	if err != nil {
 		newState.Error += err.Error() + "\n"
-	}
-
-	log.Printf("Adding tunnel IP %s/%d", clientIP, clientNetMask)
-	err = addTunnelIP(cViper, clientIP, clientNetMask)
-	handleError(err, cViper, false)
-	if err != nil {
-		newState.Error += err.Error() + "\n"
-	}
-
-	log.Printf("Adding Yggdrasil remote subnet 0.0.0.0/0")
-	err = addRemoteSubnet(cViper, "0.0.0.0/0", publicKey)
-	handleError(err, cViper, false)
-	if err != nil {
-		newState.Error += err.Error() + "\n"
+		newState.State = "disconnected"
+		saveState(newState)
+		return
 	}
 
 	// Make sure we route traffic to our Yggdrasil peer(s) to the wan default gateway
-	log.Printf("Getting Yggdrasil peers")
+	log.Printf("Get Yggdrasil peers")
 	peers, err := yggdrasilPeers()
 	handleError(err, cViper, false)
 	if err != nil {
@@ -170,7 +149,7 @@ func clientSetupRoutes(clientIP string, clientNetMask int, clientGateway string,
 
 	for _, p := range peers {
 		// ip ro add <peer_ip> via <wan_gw> dev <wan_dev>
-		log.Printf("Adding Yggdrasil peer route for %s via %s", p, defaultGatewayIP)
+		log.Printf("Add Yggdrasil peer route for %s via %s", p, defaultGatewayIP)
 		var change bool
 		change, err = addPeerRoute(p, defaultGatewayIP, defaultGatewayDev)
 		handleError(err, cViper, false)
@@ -189,7 +168,7 @@ func clientSetupRoutes(clientIP string, clientNetMask int, clientGateway string,
 		}
 	}
 
-	log.Printf("Adding default gateway pointing at %s", clientGateway)
+	log.Printf("Add default gateway pointing at %s", clientGateway)
 	err = addDefaultGateway(clientGateway)
 	handleError(err, cViper, false)
 	if err != nil {
@@ -207,17 +186,17 @@ func clientSetupRoutes(clientIP string, clientNetMask int, clientGateway string,
 func clientTearDownRoutes(clientIP string, clientNetMask int, clientGateway string, publicKey string, State state) (newState state, err error) {
 	newState = State
 	newState.Error = ""
-	log.Printf("Removing default gateway pointing at %s", clientGateway)
+	log.Printf("Remove default gateway pointing at %s", clientGateway)
 	err = removeDefaultGateway(State.OriginalDefaultGatewayIP)
 	handleError(err, cViper, false)
 	if err != nil {
 		newState.Error += err.Error() + "\n"
 	}
 
-	log.Printf("Getting Yggdrasil peers from state file")
+	log.Printf("Get Yggdrasil peers from state file")
 	handleError(nil, cViper, false)
 	for p := range State.PeerRoutes {
-		log.Printf("Removing Yggdrasil peer route for %s", p)
+		log.Printf("Remove Yggdrasil peer route for %s", p)
 		var change bool
 		change, err = removePeerRoute(p)
 		handleError(err, cViper, false)
@@ -229,35 +208,13 @@ func clientTearDownRoutes(clientIP string, clientNetMask int, clientGateway stri
 		}
 	}
 
-	log.Printf("Removing Yggdrasil remote subnet 0.0.0.0/0")
-	err = removeRemoteSubnet(cViper, "0.0.0.0/0", publicKey)
+	log.Printf("Remove GRE tunnel")
+	err = removeClientTunnel(cViper, "autoygg")
 	handleError(err, cViper, false)
 	if err != nil {
 		newState.Error += err.Error() + "\n"
 	}
 
-	log.Printf("Removing tunnel IP %s/%d", clientIP, clientNetMask)
-	err = removeTunnelIP(cViper, clientIP, clientNetMask)
-	handleError(err, cViper, false)
-	if err != nil {
-		newState.Error += err.Error() + "\n"
-	}
-
-	log.Printf("Removing Yggdrasil local subnet 0.0.0.0/0")
-	err = removeLocalSubnet("0.0.0.0/0")
-	handleError(err, cViper, false)
-	if err != nil {
-		newState.Error += err.Error() + "\n"
-	}
-
-	log.Printf("Disabling Yggdrasil tunnel routing")
-	err = disableTunnelRouting()
-	handleError(err, cViper, false)
-	newState.TunnelRouting = false
-	newState.State = "registered"
-	if err != nil {
-		newState.Error += err.Error() + "\n"
-	}
 	saveState(newState)
 	return
 }
@@ -368,7 +325,7 @@ func doRequest(fs *flag.FlagSet, action string, gatewayHost string, gatewayPort 
 	}
 
 	verb := "post"
-	log.Printf("Sending `" + action + "` request to autoygg")
+	log.Printf("Send `" + action + "` request to autoygg")
 	response, err := doRequestWorker(fs, verb, action, gatewayHost, gatewayPort, i)
 	if err != nil {
 		handleError(err, cViper, false)
@@ -525,7 +482,16 @@ func ClientMain() {
 
 	fs := clientValidateConfig()
 
-	var err error
+	// Make sure we have a version of yggdrasil that is recent enough
+	legacy, yggVersion, err := legacyYggdrasil()
+	if err != nil {
+		Fatal(err)
+	}
+	if legacy {
+		err = fmt.Errorf("The detected version of yggdrasil (%s) is too old, it is not supported by this version of autoygg.\nPlease upgrade yggdrasil to version 0.4.0 or later, or downgrade autoygg to v0.2.2", yggVersion)
+		Fatal(err)
+	}
+
 	var State state
 	State, err = loadState(State)
 	if err != nil {
