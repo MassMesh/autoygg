@@ -813,8 +813,19 @@ func ipRouteMeshTableWorker(action string, message string) (err error) {
 	if dev != sViper.GetString("GatewayWanInterface") {
 		log.Print(message)
 		err = commandWorker(action, "IpRouteTableMeshCommand", []string{"GatewayWanInterface", "RoutingTableNumber"}, true)
+		// The default route apparently disappears sometimes (maybe due to a VPN interface refresh?)
+		// Wake up periodically to correct that, if need be.
+		go func() {
+			ticker := time.NewTicker(30 * time.Second)
+			for t := range ticker.C {
+				debug("Wakeup at %s to check default route in the mesh routing table (VPN)\n", t.Format("2006-01-02 15:04:05"))
+				err := commandWorker(action, "IpRouteTableMeshCommand", []string{"GatewayWanInterface", "RoutingTableNumber"}, true)
+				if err != nil {
+					log.Println("error: unable to check/reinstall default route in the mesh routing table (VPN):", err)
+				}
+			}
+		}()
 	}
-
 	return
 }
 
@@ -919,7 +930,7 @@ func tearDown() {
 func expireLeases(db *gorm.DB, mutex *sync.Mutex) {
 	ticker := time.NewTicker(5 * time.Second)
 	for t := range ticker.C {
-		debug("Wakeup at %s\n", t.Format("2006-01-02 15:04:05"))
+		debug("Wakeup at %s to expire leases\n", t.Format("2006-01-02 15:04:05"))
 		expireLeasesWorker(db, mutex)
 	}
 }
