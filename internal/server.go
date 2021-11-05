@@ -244,6 +244,7 @@ func renewHandler(db *gorm.DB, c *gin.Context) {
 
 	if registration.State == "expired" {
 		c.JSON(http.StatusNotFound, gin.H{"Error": "Registration not found"})
+		c.Abort()
 		return
 	}
 
@@ -257,6 +258,7 @@ func renewHandler(db *gorm.DB, c *gin.Context) {
 		incErrorCount("internal")
 		log.Println("Internal error, unable to execute query:", result.Error)
 		c.JSON(http.StatusInternalServerError, gin.H{"Error": "Internal Server Error"})
+		c.Abort()
 		return
 	}
 
@@ -264,6 +266,7 @@ func renewHandler(db *gorm.DB, c *gin.Context) {
 		err = queueAddTunnel(db, registration.ID)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"{Error": "Internal Server Error"})
+			c.Abort()
 			return
 		}
 	}

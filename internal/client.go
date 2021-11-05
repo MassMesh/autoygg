@@ -103,11 +103,27 @@ func doRequestWorker(fs *flag.FlagSet, verb string, action string, gatewayHost s
 		return
 	}
 
+	// One idle connection (for up to 90 seconds) is more than enough
+	client := http.Client{
+		Transport: &http.Transport{
+			DialContext: (&net.Dialer{
+				Timeout:   30 * time.Second,
+				KeepAlive: 30 * time.Second,
+			}).DialContext,
+			ForceAttemptHTTP2:     true,
+			MaxIdleConnsPerHost:   1,
+			MaxIdleConns:          100,
+			IdleConnTimeout:       90 * time.Second,
+			TLSHandshakeTimeout:   10 * time.Second,
+			ExpectContinueTimeout: 1 * time.Second,
+		},
+	}
+
 	var resp *http.Response
 	if verb == "post" {
-		resp, err = http.Post("http://["+gatewayHost+"]:"+gatewayPort+"/"+action, "application/json", bytes.NewBuffer(req))
+		resp, err = client.Post("http://["+gatewayHost+"]:"+gatewayPort+"/"+action, "application/json", bytes.NewBuffer(req))
 	} else {
-		resp, err = http.Get("http://[" + gatewayHost + "]:" + gatewayPort + "/" + action)
+		resp, err = client.Get("http://[" + gatewayHost + "]:" + gatewayPort + "/" + action)
 	}
 	if err != nil {
 		return
@@ -291,11 +307,20 @@ func renewLease(fs *flag.FlagSet, State state) (newState state) {
 }
 
 func doInfoRequest(fs *flag.FlagSet, gatewayHost string, gatewayPort string) (i info, err error) {
+	// Reduce the connection timeout to half a second
+	// One idle connection for 90 seconds is more than enough
 	client := http.Client{
 		Transport: &http.Transport{
 			Dial: (&net.Dialer{
-				Timeout: 500 * time.Millisecond,
+				Timeout:   500 * time.Millisecond,
+				KeepAlive: 30 * time.Second,
 			}).Dial,
+			ForceAttemptHTTP2:     true,
+			MaxIdleConnsPerHost:   1,
+			MaxIdleConns:          100,
+			IdleConnTimeout:       90 * time.Second,
+			TLSHandshakeTimeout:   10 * time.Second,
+			ExpectContinueTimeout: 1 * time.Second,
 		},
 	}
 
