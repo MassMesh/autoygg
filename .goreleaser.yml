@@ -1,0 +1,111 @@
+before:
+  hooks:
+    - go mod tidy
+builds:
+  - id: amd64-server
+    env:
+      - cgo_enabled=1
+    goos:
+      - linux
+    goarch:
+      - amd64
+    dir: ./cmd/autoygg-server
+    binary: autoygg-server
+    mod_timestamp: "{{ .CommitTimestamp }}"
+    ldflags:
+      - -s -w -X github.com/massmesh/autoygg/internal.version=v{{.Version}}
+
+  - id: amd64-server-static
+    env:
+      - CGO_ENABLED=1
+    goos:
+      - linux
+    goarch:
+      - amd64
+    dir: ./cmd/autoygg-server
+    binary: autoygg-server-amd64-static
+    mod_timestamp: "{{ .CommitTimestamp }}"
+    ldflags:
+      - -s -w -extldflags "-static" -X github.com/massmesh/autoygg/internal.Version=v{{.Version}}
+
+  - id: arm64-server
+    env:
+      - CGO_ENABLED=1
+      # Needs to have the gcc-aarch64-linux-gnu package installed.
+      - CC=aarch64-linux-gnu-gcc
+    goos:
+      - linux
+    goarch:
+      - arm64
+    dir: ./cmd/autoygg-server
+    binary: autoygg-server-arm64
+    mod_timestamp: "{{ .CommitTimestamp }}"
+    ldflags:
+      - -s -w -X github.com/massmesh/autoygg/internal.Version=v{{.Version}}
+
+  - id: amd64-client
+    env:
+      - CGO_ENABLED=1
+    goos:
+      - linux
+    goarch:
+      - amd64
+    dir: ./cmd/autoygg-client
+    binary: autoygg-client
+    mod_timestamp: "{{ .CommitTimestamp }}"
+    ldflags:
+      - -s -w -X github.com/massmesh/autoygg/internal.Version=v{{.Version}}
+
+  - id: rpi4-client
+    env:
+      - CGO_ENABLED=0
+        #      - CC=aarch64-linux-gnu-gcc
+    goos:
+      - linux
+    goarch:
+      - arm64
+    dir: ./cmd/autoygg-client
+    binary: autoygg-client-rpi4
+    mod_timestamp: "{{ .CommitTimestamp }}"
+    flags:
+      - -v
+    ldflags:
+      - -s -w -X github.com/massmesh/autoygg/internal.Version=v{{.Version}}
+
+  - id: rpi3-client
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+    goarch:
+      - arm
+    goarm:
+      - 7
+    dir: ./cmd/autoygg-client
+    mod_timestamp: "{{ .CommitTimestamp }}"
+    binary: autoygg-client-rpi3
+    ldflags:
+      - -s -w -X github.com/massmesh/autoygg/internal.Version=v{{.Version}}
+
+archives:
+  - id: golang-cross
+    builds:
+      - amd64-server
+      - amd64-server-static
+      - arm64-server
+      - amd64-client
+      - rpi4-client
+      - rpi3-client
+    name_template: "{{ .Binary }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}{{ if .Arm }}v{{ .Arm }}{{ end }}"
+    format: binary
+
+checksum:
+  name_template: 'checksums.txt'
+snapshot:
+  name_template: "{{ incpatch .Version }}-next"
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - '^docs:'
+      - '^test:'
