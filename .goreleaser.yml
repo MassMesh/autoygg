@@ -97,6 +97,7 @@ archives:
       - rpi4-client
       - rpi3-client
     name_template: "{{ .Binary }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}{{ if .Arm }}v{{ .Arm }}{{ end }}"
+    allow_different_binary_count: true
     format: binary
 
 checksum:
