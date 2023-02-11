@@ -226,4 +226,4 @@ Build the software with the *make dev* command.
 
 ## Licensing
 
-Autoygg is Free Software, released under the GNU Affero GPL v3 or later. See the LICENSE file for the text of the license.
+Autoygg is Free Software, released under the GNU GPL v3 or later. See the LICENSE file for the text of the license.
