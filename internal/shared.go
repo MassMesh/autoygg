@@ -441,13 +441,13 @@ func executeYggdrasilCtl(cmd ...string) (out []byte, err error) {
 }
 
 func getSelfAddress() (address string, err error) {
-	out, err := executeYggdrasilCtl("-v", "getSelf")
+	out, err := executeYggdrasilCtl("getSelf")
 	if err != nil {
-		err = fmt.Errorf("Unable to run yggdrasilctl -v getSelf: %s", err.Error())
+		err = fmt.Errorf("Unable to run yggdrasilctl getSelf: %s", err.Error())
 		return
 	}
 
-	re := regexp.MustCompile(`(?m)^IPv6 address: (.*?)$`)
+	re := regexp.MustCompile(`(?m)^IPv6 address:[ \t]*(.*?)[ \t]*$`)
 	match := re.FindStringSubmatch(string(out))
 
 	if len(match) < 2 {
@@ -461,12 +461,12 @@ func getSelfAddress() (address string, err error) {
 }
 
 func getSelfPublicKey() (publicKey string, err error) {
-	out, err := executeYggdrasilCtl("-v", "getSelf")
+	out, err := executeYggdrasilCtl("getSelf")
 	if err != nil {
 		return
 	}
 
-	re := regexp.MustCompile(`(?m)^Public key: (.*?)$`)
+	re := regexp.MustCompile(`(?m)^Public key:[ \t]*(.*?)[ \t]*$`)
 	match := re.FindStringSubmatch(string(out))
 
 	if len(match) < 2 {
@@ -480,12 +480,12 @@ func getSelfPublicKey() (publicKey string, err error) {
 }
 
 func getSelfVersion() (version string, err error) {
-	out, err := executeYggdrasilCtl("-v", "getSelf")
+	out, err := executeYggdrasilCtl("getSelf")
 	if err != nil {
 		return
 	}
 
-	re := regexp.MustCompile(`(?m)^Build version: (.*?)$`)
+	re := regexp.MustCompile(`(?m)^Build version:[ \t]*(.*?)[ \t]*$`)
 	match := re.FindStringSubmatch(string(out))
 
 	if len(match) < 2 {
