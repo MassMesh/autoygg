@@ -2,7 +2,7 @@ module github.com/massmesh/autoygg
 
 require (
 	github.com/fsnotify/fsnotify v1.4.7
-	github.com/gin-gonic/gin v1.7.0
+	github.com/gin-gonic/gin v1.7.7
 	github.com/jinzhu/gorm v1.9.11
 	github.com/jpillora/backoff v1.0.0
 	github.com/prometheus/client_golang v0.9.3
