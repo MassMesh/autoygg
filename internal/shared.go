@@ -364,7 +364,14 @@ func yggdrasilRunningPeers(startingPeers []string) (peers []string, err error) {
 			// cf. https://github.com/miekg/dns/pull/923
 			continue
 		}
-		peers = append(peers, match[1])
+
+		p, err := resolvePeerHostname(match[1])
+		if err == nil {
+			peers = append(peers, p...)
+		} else {
+			debug("Resolving error: %+v", err)
+		}
+		//peers = append(peers, match[1])
 	}
 	return
 }
@@ -372,8 +379,8 @@ func yggdrasilRunningPeers(startingPeers []string) (peers []string, err error) {
 func yggdrasilConfigPeers(startingPeers []string) (peers []string, err error) {
 	/* Yggdrasilctl will not list peers for which a circuit is not currently
 	   established. To work around this, add all peers defined in the config
-	   file. This is mostly a backstop against yggdrasil bugs; we don't ever
-	   want to route non-ygg traffic for our peers via the yggdrasil tunnel.
+	   file. We don't ever want to route encapsulated ygg traffic for our peers
+	   via the yggdrasil tunnel.
 	*/
 	peers = startingPeers
 	peerRe := regexp.MustCompile(` .*?://(.*):\d+? `)
@@ -425,7 +432,12 @@ func yggdrasilConfigPeers(startingPeers []string) (peers []string, err error) {
 			match := peerRe.FindStringSubmatch(" " + peer + " ")
 			if len(match) > 0 {
 				debug("Found peer %s in the yggdrasil config file\n", match[1])
-				peers = append(peers, match[1])
+				p, err := resolvePeerHostname(match[1])
+				if err == nil {
+					peers = append(peers, p...)
+				} else {
+					debug("Resolving error: %+v", err)
+				}
 			} else {
 				err = fmt.Errorf("Unable to parse peer from yggdrasil config: %s", peer)
 				return
@@ -460,6 +472,33 @@ func getSelfAddress() (address string, err error) {
 
 	address = match[1]
 
+	return
+}
+
+func resolvePeerHostname(peer string) (peers []string, err error) {
+	// Try to resolve peer, if we can't, skip it (because `ip ro` only takes IPs).
+	// Hopefully, in that case, there are some other peers listed by IP address in
+	// the yggdrasil peer list!
+	addr := net.ParseIP(peer)
+	if addr == nil {
+		// It's not an IP address, try to resolve it
+		ips, _ := net.LookupIP(peer)
+		if err != nil {
+			debug("unable to resolve peer %s, skipping", peer)
+			// Resolving failed, just skip this peer
+			return
+		}
+		for _, ip := range ips {
+			// FIXME this is naive, do not assume IPv4
+			if ip.To4() != nil {
+				debug("Resolved peer %s to %s", peer, ip.String())
+				peers = append(peers, ip.String())
+			}
+		}
+	} else {
+		debug("No need to resolve peer %s", peer)
+		peers = append(peers, peer)
+	}
 	return
 }
 
