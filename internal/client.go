@@ -173,7 +173,7 @@ func clientSetupRoutes(clientIP string, clientNetMask int, clientGateway string,
 			// If we can't add a route for all yggdrasil peers, something is really wrong and we should abort.
 			// Because if we change the default gateway, we will be cutting ourselves off from the internet.
 			newState.Error += err.Error() + "\n"
-			saveState(State)
+			saveState(newState)
 			return
 		}
 		if change {
@@ -192,7 +192,7 @@ func clientSetupRoutes(clientIP string, clientNetMask int, clientGateway string,
 	}
 
 	newState.State = "connected"
-	saveState(State)
+	saveState(newState)
 
 	// FIXME TODO:
 	// * replace default route, test connectivity, if fail, rollback?
