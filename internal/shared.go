@@ -420,13 +420,16 @@ func yggdrasilConfigPeers(startingPeers []string) (peers []string, err error) {
 		err = fmt.Errorf("Unable to parse yggdrasil config: %s", conf)
 		return
 	}
-	for _, peer := range config.Peers {
-		match := peerRe.FindStringSubmatch(" " + peer + " ")
-		if len(match) > 0 {
-			peers = append(peers, match[1])
-		} else {
-			err = fmt.Errorf("Unable to parse peer from yggdrasil config: %s", peer)
-			return
+	for _, ip := range config.InterfacePeers {
+		for _, peer := range ip {
+			match := peerRe.FindStringSubmatch(" " + peer + " ")
+			if len(match) > 0 {
+				debug("Found peer %s in the yggdrasil config file\n", match[1])
+				peers = append(peers, match[1])
+			} else {
+				err = fmt.Errorf("Unable to parse peer from yggdrasil config: %s", peer)
+				return
+			}
 		}
 	}
 	return
