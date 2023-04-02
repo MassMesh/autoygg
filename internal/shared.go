@@ -208,7 +208,9 @@ func removePeerRoute(peer string) (bool, error) {
 	return peerRouteWorker("Del", peer, "", "")
 }
 
-func peerRouteWorker(action string, peer string, defaultGatewayIP string, defaultGatewayDevice string) (change bool, err error) {
+func peerRouteWorker(action string, peer string, defaultGatewayIP string, defaultGatewayDevice string) (bool, error) {
+	var change bool
+	var err error
 	cmd := cViper.GetString(action + "PeerRouteListCommand")
 	cmd = strings.Replace(cmd, "%%Peer%%", peer, -1)
 	if action == "Add" {
@@ -220,16 +222,16 @@ func peerRouteWorker(action string, peer string, defaultGatewayIP string, defaul
 	out, err := command(cViper.GetString("Shell"), cViper.GetString("ShellCommandArg"), cmd).Output()
 	if err != nil {
 		err = fmt.Errorf("Unable to run `%s %s %s`: %s", cViper.GetString("Shell"), cViper.GetString("ShellCommandArg"), cmd, err)
-		return
+		return change, err
 	}
 
 	matched, err := regexp.Match(`^`+peer, out)
 	if err != nil {
-		return
+		return change, err
 	}
 	if action == "Add" && matched {
 		// Nothing to do!
-		return
+		return change, err
 	}
 
 	if action == "Del" && !matched {
@@ -247,7 +249,7 @@ func peerRouteWorker(action string, peer string, defaultGatewayIP string, defaul
 	_, err = command(cViper.GetString("Shell"), cViper.GetString("ShellCommandArg"), cmd).Output()
 	if err != nil {
 		err = fmt.Errorf("Unable to run `%s %s %s`: %s", cViper.GetString("Shell"), cViper.GetString("ShellCommandArg"), cmd, err)
-		return
+		return change, err
 	}
 
 	// Flush the route cache
@@ -255,11 +257,10 @@ func peerRouteWorker(action string, peer string, defaultGatewayIP string, defaul
 	_, err = command(cViper.GetString("Shell"), cViper.GetString("ShellCommandArg"), cmdFlushRouteCache).Output()
 	if err != nil {
 		err = fmt.Errorf("Unable to run `%s %s %s`: %s", cViper.GetString("Shell"), cViper.GetString("ShellCommandArg"), cmdFlushRouteCache, err)
-		return
+		return change, err
 	}
 	change = true
-
-	return
+	return change, err
 }
 
 // addDefaultGateway adds a default route.
