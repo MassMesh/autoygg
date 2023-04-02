@@ -618,10 +618,11 @@ func ClientMain() {
 			Fatal("Couldn't set up cron job!")
 		}
 		go c.Start()
-		sig := make(chan os.Signal, 1)
-		signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
-		<-sig
+		cancelChan := make(chan os.Signal, 1)
+		signal.Notify(cancelChan, os.Interrupt, syscall.SIGTERM)
+		sig := <-cancelChan
 		fmt.Fprint(os.Stderr, "\r") // Overwrite any ^C that may have been printed on the screen
+		debug("Caught signal %v\n", sig)
 		State.DesiredState = "disconnected"
 		State, _ = clientTearDownRoutes(r.ClientIP, r.ClientNetMask, r.ClientGateway, r.GatewayPublicKey, State)
 		_, _, _ = doRequest(fs, "release", cViper.GetString("GatewayHost"), cViper.GetString("GatewayPort"), State)
